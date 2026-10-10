@@ -8,7 +8,7 @@ let isHandlerConfigured = false;
  * Configure global notification presentation behavior safely.
  */
 export function initNotificationHandler(): void {
-  if (isHandlerConfigured || isRunningInExpoGo()) return;
+  if (isHandlerConfigured || (Platform.OS === 'android' && isRunningInExpoGo())) return;
   try {
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
@@ -47,7 +47,7 @@ export async function setupNotificationChannel(): Promise<void> {
  * Request notification permissions from device.
  */
 export async function requestNotificationPermissions(): Promise<boolean> {
-  if (isRunningInExpoGo()) return true;
+  if (Platform.OS === 'android' && isRunningInExpoGo()) return true;
   try {
     const { status } = await Notifications.requestPermissionsAsync();
     return status === 'granted';
@@ -61,7 +61,7 @@ export async function requestNotificationPermissions(): Promise<boolean> {
  * Cancel all pending scheduled prayer notifications.
  */
 export async function cancelAllPrayerNotifications(): Promise<void> {
-  if (isRunningInExpoGo()) return;
+  if (Platform.OS === 'android' && isRunningInExpoGo()) return;
   try {
     await Notifications.cancelAllScheduledNotificationsAsync();
   } catch (error) {
@@ -77,7 +77,7 @@ export async function schedulePrayerNotification(
   targetDate: Date,
   locationName: string
 ): Promise<void> {
-  if (isRunningInExpoGo()) return;
+  if (Platform.OS === 'android' && isRunningInExpoGo()) return;
   try {
     const isFajr = prayerName === 'Fajr';
     const body = isFajr
@@ -110,7 +110,7 @@ export async function schedulePostPrayerDuaNotification(
   prayerTime: Date,
   locationName: string
 ): Promise<void> {
-  if (isRunningInExpoGo()) return;
+  if (Platform.OS === 'android' && isRunningInExpoGo()) return;
   try {
     const targetDate = new Date(prayerTime.getTime() + 15 * 60 * 1000);
     if (targetDate.getTime() <= Date.now()) return;
@@ -144,7 +144,7 @@ export async function schedulePostPrayerDuaNotification(
 export function addNotificationResponseListener(
   onResponse: (response: Notifications.NotificationResponse) => void
 ): { remove: () => void } {
-  if (isRunningInExpoGo()) {
+  if (Platform.OS === 'android' && isRunningInExpoGo()) {
     return { remove: () => {} };
   }
   try {

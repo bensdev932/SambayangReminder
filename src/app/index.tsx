@@ -354,7 +354,15 @@ export default function HomeScreen() {
   // Audio players from expo-audio (Standard Adhan and Fajr Adhan)
   const standardPlayer = useAudioPlayer(standardAdhanAudio);
   const fajrPlayer = useAudioPlayer(fajrAdhanAudio);
-  const hasAutoPlayedForPrayer = useRef<string | null>(null);
+  const standardStatus = useAudioPlayerStatus(standardPlayer);
+  const fajrStatus = useAudioPlayerStatus(fajrPlayer);
+
+  // Track currently playing prayer name
+  const [currentlyPlayingPrayer, setCurrentlyPlayingPrayer] = useState<PrayerName | null>(null);
+
+  // Persistent tracking of last auto-played prayer key: "YYYY-MM-DD-PrayerName"
+  const lastAutoPlayedKey = useRef<string | null>(null);
+  const wasAudioPlayingRef = useRef<boolean>(false);
 
   // Configure audio mode on mount
   useEffect(() => {
@@ -362,6 +370,8 @@ export default function HomeScreen() {
       try {
         await setAudioModeAsync({
           playsInSilentMode: true,
+          shouldPlayInBackground: true,
+          interruptionMode: 'doNotMix',
         });
       } catch {
         // Fallback gracefully
@@ -581,10 +591,25 @@ export default function HomeScreen() {
     };
   }, [coords, currentTime]);
 
-  const isFajrUpcoming = prayerData.upcomingName === 'Fajr';
-  const activePlayer = isFajrUpcoming ? fajrPlayer : standardPlayer;
-  const playerStatus = useAudioPlayerStatus(activePlayer);
-  const isAudioPlaying = Boolean(playerStatus?.playing);
+  const isStandardPlaying = Boolean(standardStatus?.playing);
+  const isFajrPlaying = Boolean(fajrStatus?.playing);
+  const isAudioPlaying = isStandardPlaying || isFajrPlaying;
+
+  const activePlayer = isFajrPlaying
+    ? fajrPlayer
+    : isStandardPlaying
+    ? standardPlayer
+    : currentlyPlayingPrayer === 'Fajr'
+    ? fajrPlayer
+    : standardPlayer;
+
+  const activePlayerStatus = isFajrPlaying
+    ? fajrStatus
+    : isStandardPlaying
+    ? standardStatus
+    : currentlyPlayingPrayer === 'Fajr'
+    ? fajrStatus
+    : standardStatus;
 
   // Islamic Event Countdown data (Ramadan -> Eid al-Fitr -> Eid al-Adha)
   const todayDateString = currentTime.toDateString();
@@ -627,38 +652,73 @@ export default function HomeScreen() {
     };
   }, [isNotificationsEnabled, prayerData.prayersList, locationName]);
 
-  // Trigger auto-play when prayer countdown reaches zero
+  // Trigger Adhan auto-play when a Fard prayer time arrives (robust 2-minute arrival window)
   useEffect(() => {
-    if (
-      isNotificationsEnabled &&
-      prayerData.totalSeconds <= 1 &&
-      prayerData.targetTime &&
-      hasAutoPlayedForPrayer.current !== prayerData.upcomingName
-    ) {
-      hasAutoPlayedForPrayer.current = prayerData.upcomingName;
-      try {
-        if (isFajrUpcoming) {
-          standardPlayer.pause();
-          fajrPlayer.seekTo(0);
-          fajrPlayer.play();
-        } else {
-          fajrPlayer.pause();
-          standardPlayer.seekTo(0);
-          standardPlayer.play();
+    if (!isNotificationsEnabled) return;
+
+    const now = currentTime.getTime();
+    const dateKey = `${currentTime.getFullYear()}-${currentTime.getMonth() + 1}-${currentTime.getDate()}`;
+
+    for (const prayer of prayerData.prayersList) {
+      const prayerTime = prayer.time.getTime();
+      const elapsedSeconds = (now - prayerTime) / 1000;
+      const prayerKey = `${dateKey}-${prayer.id}`;
+
+      // Reset played key if time was wound back before the prayer (helps when testing with clock changes)
+      if (elapsedSeconds < -10 && lastAutoPlayedKey.current === prayerKey) {
+        lastAutoPlayedKey.current = null;
+      }
+
+      // Check arrival window: within [0s, 120s] (arrived in the last 2 minutes)
+      if (elapsedSeconds >= 0 && elapsedSeconds <= 120) {
+        if (lastAutoPlayedKey.current !== prayerKey) {
+          lastAutoPlayedKey.current = prayerKey;
+          setCurrentlyPlayingPrayer(prayer.id);
+
+          try {
+            if (prayer.id === 'Fajr') {
+              standardPlayer.pause();
+              standardPlayer.seekTo(0);
+              fajrPlayer.seekTo(0);
+              fajrPlayer.play();
+            } else {
+              fajrPlayer.pause();
+              fajrPlayer.seekTo(0);
+              standardPlayer.seekTo(0);
+              standardPlayer.play();
+            }
+          } catch (err) {
+            console.warn(`[Adhan Auto-Play] Failed to start Adhan for ${prayer.name}:`, err);
+          }
+          break;
         }
-      } catch {
-        // Audio playback catch
       }
     }
   }, [
+    currentTime,
     isNotificationsEnabled,
-    prayerData.totalSeconds,
-    prayerData.targetTime,
-    prayerData.upcomingName,
-    isFajrUpcoming,
-    fajrPlayer,
+    prayerData.prayersList,
     standardPlayer,
+    fajrPlayer,
   ]);
+
+  // When Adhan playback finishes naturally, automatically prompt / open Post-Salah Du'a modal
+  useEffect(() => {
+    const wasPlaying = wasAudioPlayingRef.current;
+    wasAudioPlayingRef.current = isAudioPlaying;
+
+    if (wasPlaying && !isAudioPlaying) {
+      const duration = activePlayerStatus?.duration ?? 0;
+      const currentPos = activePlayerStatus?.currentTime ?? 0;
+      // If stopped near the end of the track (completed naturally)
+      if (duration > 0 && currentPos >= duration - 3) {
+        const timer = setTimeout(() => {
+          setIsDuaModalVisible(true);
+        }, 100);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [isAudioPlaying, activePlayerStatus]);
 
   const handleToggleNotification = async () => {
     const newState = !isNotificationsEnabled;
@@ -685,14 +745,10 @@ export default function HomeScreen() {
 
   const handleToggleAdhan = () => {
     try {
-      if (playerStatus?.playing) {
-        activePlayer.pause();
+      if (isAudioPlaying) {
+        standardPlayer.pause();
+        fajrPlayer.pause();
       } else {
-        if (isFajrUpcoming) {
-          standardPlayer.pause();
-        } else {
-          fajrPlayer.pause();
-        }
         activePlayer.play();
       }
     } catch {
@@ -706,6 +762,7 @@ export default function HomeScreen() {
       fajrPlayer.seekTo(0);
       standardPlayer.pause();
       standardPlayer.seekTo(0);
+      setCurrentlyPlayingPrayer(null);
     } catch {
       // Audio fallback
     }
@@ -836,13 +893,15 @@ export default function HomeScreen() {
               </View>
               <View style={styles.audioTextWrapper}>
                 <Text style={[styles.audioTitle, { color: themeTextColor }]}>
-                  {isFajrUpcoming
+                  {currentlyPlayingPrayer === 'Fajr'
                     ? 'Fajr Adhan (Prayer is Better than Sleep)'
+                    : currentlyPlayingPrayer
+                    ? `${currentlyPlayingPrayer} Adhan Recitation Playing`
                     : 'Adhan Recitation Playing'}
                 </Text>
                 <Text style={[styles.audioTime, { color: themeSecondaryTextColor }]}>
-                  {formatAudioDuration(playerStatus?.currentTime ?? 0)} /{' '}
-                  {formatAudioDuration(playerStatus?.duration || 170)}
+                  {formatAudioDuration(activePlayerStatus?.currentTime ?? 0)} /{' '}
+                  {formatAudioDuration(activePlayerStatus?.duration || 170)}
                 </Text>
               </View>
             </View>
