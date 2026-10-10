@@ -3,8 +3,9 @@
  * 
  * In Expo SDK 53+, remote push notifications were removed from Android Expo Go.
  * This script ensures that:
- * 1. warnOfExpoGoPushUsage logs a warning instead of throwing an unhandled fatal error on Android Expo Go.
+ * 1. warnOfExpoGoPushUsage is silenced to prevent noisy bundle warnings in development.
  * 2. TopicSubscriptionModule.android.js gracefully falls back when ExpoTopicSubscriptionModule native module is not linked.
+ * 3. build/index.js top-level dev-client warning is suppressed for clean offline local-notification usage.
  */
 
 const fs = require('fs');
@@ -20,15 +21,9 @@ if (!fs.existsSync(notificationsPkgDir)) {
 // 1. Patch warnOfExpoGoPushUsage.js
 const warnFile = path.join(notificationsPkgDir, 'build', 'warnOfExpoGoPushUsage.js');
 if (fs.existsSync(warnFile)) {
-  let content = fs.readFileSync(warnFile, 'utf8');
-  if (content.includes("if (Platform.OS === 'android')") && content.includes("throw new Error(message)")) {
-    content = content.replace(
-      /if \(Platform\.OS === 'android'\) \{\s*throw new Error\(message\);\s*\}\s*else if \(__DEV__\) \{/g,
-      'if (__DEV__) {'
-    );
-    fs.writeFileSync(warnFile, content, 'utf8');
-    console.log('[patch-expo-notifications] Patched warnOfExpoGoPushUsage.js successfully.');
-  }
+  const content = `export const warnOfExpoGoPushUsage = () => {};\n`;
+  fs.writeFileSync(warnFile, content, 'utf8');
+  console.log('[patch-expo-notifications] Patched warnOfExpoGoPushUsage.js successfully.');
 }
 
 // 2. Patch TopicSubscriptionModule.android.js
@@ -56,7 +51,21 @@ export default nativeModule || {
   }
 }
 
-// 3. Create expo-module-scripts stub to satisfy internal package tsconfig.json references
+// 3. Patch index.js to suppress the top-level dev-client warning in Expo Go
+const indexFile = path.join(notificationsPkgDir, 'build', 'index.js');
+if (fs.existsSync(indexFile)) {
+  let content = fs.readFileSync(indexFile, 'utf8');
+  if (content.includes("if (isRunningInExpoGo() && !areWeTestingWithJest())")) {
+    content = content.replace(
+      /if \(isRunningInExpoGo\(\) && !areWeTestingWithJest\(\)\) \{\s*const message = '`expo-notifications` functionality is not fully supported in Expo Go:[^;]*;\s*console\.warn\(message\);\s*\}/g,
+      '// [Patched for clean Expo Go development] Warning suppressed for offline local notifications'
+    );
+    fs.writeFileSync(indexFile, content, 'utf8');
+    console.log('[patch-expo-notifications] Patched build/index.js successfully.');
+  }
+}
+
+// 4. Create expo-module-scripts stub to satisfy internal package tsconfig.json references
 const moduleScriptsDir = path.join(projectRoot, 'node_modules', 'expo-module-scripts');
 if (!fs.existsSync(moduleScriptsDir)) {
   fs.mkdirSync(moduleScriptsDir, { recursive: true });
@@ -69,4 +78,3 @@ const stubTsconfig = path.join(moduleScriptsDir, 'tsconfig.base.json');
 if (!fs.existsSync(stubTsconfig)) {
   fs.writeFileSync(stubTsconfig, JSON.stringify({ compilerOptions: { target: 'esnext', module: 'esnext', skipLibCheck: true } }, null, 2));
 }
-
