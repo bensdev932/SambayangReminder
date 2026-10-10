@@ -18,12 +18,19 @@ if (!fs.existsSync(notificationsPkgDir)) {
   process.exit(0);
 }
 
-// 1. Patch warnOfExpoGoPushUsage.js
-const warnFile = path.join(notificationsPkgDir, 'build', 'warnOfExpoGoPushUsage.js');
-if (fs.existsSync(warnFile)) {
+// 1. Patch warnOfExpoGoPushUsage (both build JS and src TS to prevent IDE diagnostics)
+const warnFileJs = path.join(notificationsPkgDir, 'build', 'warnOfExpoGoPushUsage.js');
+if (fs.existsSync(warnFileJs)) {
   const content = `export const warnOfExpoGoPushUsage = () => {};\n`;
-  fs.writeFileSync(warnFile, content, 'utf8');
+  fs.writeFileSync(warnFileJs, content, 'utf8');
   console.log('[patch-expo-notifications] Patched warnOfExpoGoPushUsage.js successfully.');
+}
+
+const warnFileTs = path.join(notificationsPkgDir, 'src', 'warnOfExpoGoPushUsage.ts');
+if (fs.existsSync(warnFileTs)) {
+  const content = `export const warnOfExpoGoPushUsage = (): void => {};\n`;
+  fs.writeFileSync(warnFileTs, content, 'utf8');
+  console.log('[patch-expo-notifications] Patched warnOfExpoGoPushUsage.ts successfully.');
 }
 
 // 2. Patch TopicSubscriptionModule.android.js
