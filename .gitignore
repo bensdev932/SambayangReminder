@@ -41,3 +41,8 @@ example
 # generated native folders
 /ios
 /android
+
+# local binaries & test assets
+*.apk
+screenshot.png
+
