@@ -2,7 +2,7 @@
   "expo": {
     "name": "Adhan & Prayer Reminder",
     "slug": "SambayangReminder",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "adhanprayerreminder",
@@ -22,7 +22,12 @@
       "predictiveBackGestureEnabled": false,
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "SCHEDULE_EXACT_ALARM",
+        "USE_EXACT_ALARM",
+        "POST_NOTIFICATIONS",
+        "VIBRATE",
+        "WAKE_LOCK"
       ]
     },
     "web": {
@@ -30,6 +35,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "./plugins/withNotificationSounds",
       "expo-router",
       [
         "expo-splash-screen",
@@ -50,7 +56,11 @@
         "expo-notifications",
         {
           "icon": "./assets/images/icon.png",
-          "color": "#2563EB"
+          "color": "#2563EB",
+          "sounds": [
+            "./assets/audio/adhan.mp3",
+            "./assets/audio/fajr_adhan.mp3"
+          ]
         }
       ],
       "expo-asset"

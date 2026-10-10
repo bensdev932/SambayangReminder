@@ -66,3 +66,9 @@ Docs: https://docs.expo.dev/eas/index.md
 - **Hermes Locale Incomplete Support**: Android Hermes does not reliably support non-Gregorian calendar locales (`islamic-umalqura` via `Intl.DateTimeFormat`) on all devices.
 - **Always Provide Offline Tabular Fallback**: Implement astronomical/Kuwaiti mathematical algorithms as primary or fallback logic for Islamic calendar dates.
 
+### 5. Transitioning from Expo Go to Development Builds for Background Tasks & Audio
+- **Expo Go Limitation**: Expo Go disables native background tasks, custom notification sounds in `res/raw`, and background audio execution when the app is killed.
+- **Development Build Execution**: When building with `expo-dev-client` or EAS (`eas build`), `isRunningInExpoGo()` evaluates to `false`, activating native services.
+- **Exact Alarms & Background Tasks**: For scheduled prayer calls and Adhan playback, configure `SCHEDULE_EXACT_ALARM` permissions in `app.json` and use an Expo config plugin to copy local audio files into `android/app/src/main/res/raw/`.
+
+

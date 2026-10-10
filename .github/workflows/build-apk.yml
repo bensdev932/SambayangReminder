@@ -1,0 +1,102 @@
+name: Build & Release Android APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release Tag (e.g. v1.0.2)'
+        required: true
+        default: 'v1.0.2'
+      release_name:
+        description: 'Release Title'
+        required: true
+        default: 'Sambayang Reminder v1.0.2'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Node Dependencies
+        run: npm ci
+
+      - name: Expo Prebuild (Generate native Android with Adhan raw sounds)
+        run: npx expo prebuild --clean --no-install
+
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
+
+      - name: Build Android Release APK
+        run: |
+          cd android
+          ./gradlew assembleRelease --no-daemon
+
+      - name: Prepare APK Asset
+        id: prepare_apk
+        run: |
+          mkdir -p release-artifacts
+          TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
+          cp android/app/build/outputs/apk/release/app-release.apk "release-artifacts/SambayangReminder-${TAG}.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "release-artifacts/SambayangReminder.apk"
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SambayangReminder-Android-APK
+          path: release-artifacts/*.apk
+          retention-days: 14
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.prepare_apk.outputs.tag }}
+          name: ${{ github.event.inputs.release_name || steps.prepare_apk.outputs.tag }}
+          body: |
+            ### 🕌 Sambayang Reminder ${{ steps.prepare_apk.outputs.tag }}
+            
+            This release includes full support for background Adhan audio notifications and accurate prayer time calculations.
+
+            #### What's New:
+            - **Background Adhan Notifications**: High-priority Android notification channels with bundled `adhan.mp3` and `fajr_adhan.mp3` audio.
+            - **Exact Alarms**: Guaranteed punctual prayer reminders using `SCHEDULE_EXACT_ALARM` permissions.
+            - **Standalone Native Build**: Prebuilt native Android APK compatible with all Android devices without requiring Expo Go.
+            - **Post-Salah Du'a & Adhkar**: Punctual supplication reminders and authentic dhikr counters.
+
+            #### Installation:
+            1. Download `SambayangReminder.apk` below to your Android device.
+            2. Open the downloaded APK file and tap **Install** (allow installation from unknown sources if prompted).
+          files: |
+            release-artifacts/*.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

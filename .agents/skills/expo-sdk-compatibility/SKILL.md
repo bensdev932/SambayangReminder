@@ -119,3 +119,20 @@ React 19 validates store snapshots with `Object.is`:
 For non-Gregorian calendars (Hijri, Islamic Umm al-Qura, Persian):
 - Android Hermes might not have full ICU locales bundled.
 - Always provide an astronomical tabular algorithm fallback (e.g., Kuwaiti algorithm) when calculating Islamic dates offline.
+
+---
+
+## 6. Development Build Migration & Background Adhan Audio
+
+### Why Expo Go Fails for Adhan Audio
+1. `isRunningInExpoGo()` intentionally halts scheduling in defensive services to evade Android SDK 53+ Expo Go push crashes.
+2. Expo Go does not bundle project-specific audio into `android/app/src/main/res/raw`.
+
+### Development Build Requirements
+1. **Config Plugin for Notification Sound**:
+   Use `withDangerousMod` or an Expo config plugin to copy `assets/audio/adhan.mp3` and `assets/audio/fajr_adhan.mp3` into Android `res/raw/`. Note that Android resource names in `res/raw` must be lowercase alphanumeric and underscores only.
+2. **Channel Sound Binding**:
+   Specify `sound: 'adhan'` and `sound: 'fajr_adhan'` (without the `.mp3` extension) in `setNotificationChannelAsync`.
+3. **Exact Alarm Permissions**:
+   Add `android.permission.SCHEDULE_EXACT_ALARM` and `android.permission.USE_EXACT_ALARM` to `app.json` for precise prayer notification delivery.
+

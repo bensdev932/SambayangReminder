@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -30,7 +31,8 @@ import {
 } from '../services/notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const UPDATE_BUTTON_DISMISSED_KEY = '@sambayang_update_button_dismissed_v1.0.1';
+const GITHUB_RELEASES_URL = 'https://github.com/bensdev932/SambayangReminder/releases/latest';
+const UPDATE_BUTTON_DISMISSED_KEY = '@sambayang_update_button_dismissed_v1.0.2';
 
 // Local Adhan audio files
 const standardAdhanAudio = require('../../assets/audio/adhan.mp3');
@@ -386,10 +388,15 @@ export default function HomeScreen() {
     try {
       await AsyncStorage.setItem(UPDATE_BUTTON_DISMISSED_KEY, 'true');
       setIsUpdateBannerVisible(false);
-      Alert.alert(
-        'App Up to Date',
-        'You are running Sambayang Reminder v1.0.1 with the latest prayer times and Adhan auto-play fixes.'
-      );
+      const supported = await Linking.canOpenURL(GITHUB_RELEASES_URL);
+      if (supported) {
+        await Linking.openURL(GITHUB_RELEASES_URL);
+      } else {
+        Alert.alert(
+          'Latest Release',
+          `Download the latest standalone APK with background Adhan at: ${GITHUB_RELEASES_URL}`
+        );
+      }
     } catch {
       setIsUpdateBannerVisible(false);
     }
@@ -1158,11 +1165,11 @@ export default function HomeScreen() {
                     New Update Available
                   </Text>
                   <View style={styles.updateVersionBadge}>
-                    <Text style={styles.updateVersionBadgeText}>v1.0.1</Text>
+                    <Text style={styles.updateVersionBadgeText}>v1.0.2</Text>
                   </View>
                 </View>
                 <Text style={[styles.updateDescription, { color: themeSecondaryTextColor }]}>
-                  Adhan auto-play engine fix, background audio support, and prayer notification improvements.
+                  Native background Adhan audio notifications and punctual exact prayer alarms.
                 </Text>
               </View>
             </View>
@@ -1170,7 +1177,7 @@ export default function HomeScreen() {
             <Pressable
               onPress={handleApplyUpdate}
               accessibilityRole="button"
-              accessibilityLabel="Update now and dismiss button permanently"
+              accessibilityLabel="Download latest v1.0.2 APK from GitHub Releases"
               style={({ pressed }) => [
                 styles.updateActionButton,
                 pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
@@ -1181,7 +1188,7 @@ export default function HomeScreen() {
                 end={{ x: 1, y: 0 }}
                 style={styles.updateGradientButton}>
                 <Ionicons name="cloud-download-outline" size={17} color="#FFFFFF" />
-                <Text style={styles.updateButtonText}>Update to v1.0.1</Text>
+                <Text style={styles.updateButtonText}>Download v1.0.2 APK</Text>
               </LinearGradient>
             </Pressable>
           </View>
