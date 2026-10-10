@@ -39,3 +39,30 @@ Docs: https://docs.expo.dev/eas/index.md
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
 - Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
 - Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
+
+## Critical Rules to Prevent Startup Crashes & "3 Logs Error"
+
+### 1. `expo-notifications` & Android Expo Go (SDK 53+)
+- **Breaking Change**: Starting in Expo SDK 53, remote push notification functionality and `ExpoTopicSubscriptionModule` were removed from Android Expo Go. Importing `expo-notifications` directly can cause unhandled fatal exceptions at module-load time.
+- **Never Import in Route Files**: NEVER import `expo-notifications` directly in `src/app/**` screens or UI components.
+- **Encapsulate in Service**: Always isolate notification logic in a defensive service layer (e.g. `src/services/notifications.ts`).
+- **Guard with `isRunningInExpoGo()`**: Always check `if (isRunningInExpoGo()) return;` before calling `setNotificationChannelAsync`, `scheduleNotificationAsync`, or `setNotificationHandler`.
+- **Auto-Patch Postinstall**: In projects targeting Expo Go on Android, always configure a postinstall hook (`scripts/patch-expo-notifications.js` in `package.json` `"postinstall"`) to patch `warnOfExpoGoPushUsage.js` and `TopicSubscriptionModule.android.js`.
+
+### 2. Expo Router Route Resilience & Error Boundaries
+- **Export ErrorBoundary**: Every root navigator `src/app/_layout.tsx` must explicitly export `ErrorBoundary`:
+  ```tsx
+  export { ErrorBoundary } from 'expo-router';
+  ```
+- **Zero Top-Level Throwing**: Top-level code in `src/app/**` must NEVER throw unhandled errors during module evaluation. An unhandled exception during module import halts evaluation and causes Expo Router to log:
+  1. `Route "./<name>.tsx" is missing the required default export.`
+  2. `TypeError: Cannot read property 'ErrorBoundary' of undefined`
+
+### 3. React 19 `useSyncExternalStore` Snapshot Caching
+- **Strict Referential Stability**: React 19 requires that `Object.is(getSnapshot(), getSnapshot()) === true` when store state has not changed.
+- **Never Return Dynamic Values Directly**: Never return `Date.now()` or newly constructed objects/arrays directly from `getSnapshot`. Always maintain a cached snapshot in store scope that only updates when listeners are notified.
+
+### 4. Non-Gregorian (Hijri) Offline Calculations
+- **Hermes Locale Incomplete Support**: Android Hermes does not reliably support non-Gregorian calendar locales (`islamic-umalqura` via `Intl.DateTimeFormat`) on all devices.
+- **Always Provide Offline Tabular Fallback**: Implement astronomical/Kuwaiti mathematical algorithms as primary or fallback logic for Islamic calendar dates.
+
