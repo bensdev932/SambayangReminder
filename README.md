@@ -1,56 +1,84 @@
-# Welcome to your Expo app 👋
+# 🕌 Sambayang Reminder — Adhan & Prayer Times
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A modern, offline-first Islamic Prayer Times and Adhan reminder mobile application built with **React Native**, **Expo SDK 57**, **React 19**, and **TypeScript**.
 
-## Get started
+Designed with rich Islamic aesthetics, precise astronomical calculations, adhan playback, Ramadan countdown, and daily post-salah supplications (Dua).
 
-1. Install dependencies
+---
 
-   ```bash
-   npm install
-   ```
+## 📸 Screenshots
 
-2. Start the app
+| Today's Prayer Times & Adhan Player | Ramadan Countdown & Qibla / Location |
+| :---: | :---: |
+| ![Today's Prayer Times](assets/screenshots/screenshot-1-hero-prayers.jpg) | ![Ramadan Countdown Banner](assets/screenshots/screenshot-2-ramadan-countdown.jpg) |
 
-   ```bash
-   npx expo start
-   ```
+---
 
-In the output, you'll find options to open the app in a
+## ✨ Features
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- **🕋 Accurate Prayer Times**: Computes Fajr, Sunrise, Dhuhr, Asr, Maghrib, and Isha using the `adhan` library with customizable calculation methods (MWL, ISNA, Egypt, Makkah, Singapore/Brunei/Malaysia JAKIM standards).
+- **🌙 Ramadan Countdown & Hijri Calendar**: Real-time days and hours countdown to the holy month of Ramadan, complete with offline Islamic Hijri date calculations.
+- **🔊 Adhan Audio Playback**: High-quality Adhan playback powered by `expo-audio`, including specific Fajr Adhan (*"As-salatu khayrun minan-nawm"*).
+- **📿 Post-Salah Dua & Dhikr**: Interactive modal with authentic authentic post-prayer supplications in Arabic, English transliteration, and English translations.
+- **📍 Location Support**: Auto-detect current coordinates via `expo-location` or select custom cities (Brunei Darussalam, Southeast Asia, and international locations).
+- **🔔 Resilient Notifications**: Smart prayer alert scheduling designed defensively for Expo Go and standalone native builds.
+- **🎨 Midnight Emerald Aesthetic**: Premium dark Islamic theme featuring glassmorphism cards, glowing accent colors, and custom crescent moon branding.
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+---
 
-## Get a fresh project
+## 🛠️ Tech Stack
 
-When you're ready, run:
+- **Framework**: [Expo SDK 57](https://expo.dev) (React Native 0.86, React 19)
+- **Routing**: [Expo Router v4](https://docs.expo.dev/router/introduction/) (File-based navigation)
+- **Calculations**: [`adhan`](https://github.com/batoulapps/adhan-js)
+- **Audio**: [`expo-audio`](https://docs.expo.dev/versions/latest/sdk/audio/)
+- **Animation**: React Native Reanimated
+- **Language**: TypeScript (Strict typing)
+
+---
+
+## 🚀 Getting Started
+
+### 1. Prerequisites
+- [Node.js](https://nodejs.org/) (v18+ recommended)
+- [Expo Go](https://expo.dev/go) app on Android or iOS (or an Android/iOS emulator)
+
+### 2. Installation
+
+Clone the repository and install dependencies:
 
 ```bash
-npm run reset-project
+git clone https://github.com/bensdev932/SambayangReminder.git
+cd SambayangReminder
+npm install
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+### 3. Running Locally
 
-### Other setup steps
+Start the Expo development server:
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npx expo start
+```
 
-## Learn more
+- Scan the QR code with your mobile device using Expo Go (Android) or the Camera app (iOS).
+- Press `a` to run on Android emulator.
+- Press `i` to run on iOS simulator.
+- Press `w` to run in web browser.
 
-To learn more about developing your project with Expo, look at the following resources:
+---
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## 🧪 Quality Checks
 
-## Join the community
+Run linting and type checking:
 
-Join our community of developers creating universal apps.
+```bash
+npx tsc --noEmit   # Typecheck
+npx expo lint      # ESLint with expo config
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+---
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
