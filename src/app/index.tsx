@@ -364,7 +364,7 @@ export default function HomeScreen() {
 
   // Track currently playing prayer name
   const [currentlyPlayingPrayer, setCurrentlyPlayingPrayer] = useState<PrayerName | null>(null);
-  const [isUpdateBannerVisible, setIsUpdateBannerVisible] = useState<boolean>(false);
+  const [isUpdateBannerVisible, setIsUpdateBannerVisible] = useState<boolean>(true);
 
   // Load update button visibility from persistent storage
   useEffect(() => {
@@ -372,8 +372,8 @@ export default function HomeScreen() {
     void (async () => {
       try {
         const dismissed = await AsyncStorage.getItem(UPDATE_BUTTON_DISMISSED_KEY);
-        if (!dismissed && isMounted) {
-          setIsUpdateBannerVisible(true);
+        if (dismissed === 'true' && isMounted) {
+          setIsUpdateBannerVisible(false);
         }
       } catch {
         // Fallback gracefully
@@ -383,6 +383,15 @@ export default function HomeScreen() {
       isMounted = false;
     };
   }, []);
+
+  const handleDismissUpdate = async () => {
+    try {
+      await AsyncStorage.setItem(UPDATE_BUTTON_DISMISSED_KEY, 'true');
+      setIsUpdateBannerVisible(false);
+    } catch {
+      setIsUpdateBannerVisible(false);
+    }
+  };
 
   const handleApplyUpdate = async () => {
     try {
@@ -837,12 +846,24 @@ export default function HomeScreen() {
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.heroCard}>
-          {/* TOP HEADER ROW: Dates */}
+          {/* TOP HEADER ROW: Dates & Update Action */}
           <View style={styles.heroHeaderRow}>
             <View style={styles.dateBlock}>
               <Text style={styles.gregorianDateText}>{formatGregorianDate(currentTime)}</Text>
               <Text style={styles.hijriDateText}>{formatHijriDate(currentTime)}</Text>
             </View>
+            <Pressable
+              onPress={handleApplyUpdate}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel="Download latest v1.0.2 APK"
+              style={({ pressed }) => [
+                styles.heroUpdatePill,
+                pressed && { opacity: 0.8, transform: [{ scale: 0.96 }] },
+              ]}>
+              <Ionicons name="cloud-download-outline" size={13} color="#FFFFFF" />
+              <Text style={styles.heroUpdatePillText}>Update v1.0.2</Text>
+            </Pressable>
           </View>
 
           {/* MIDDLE ROW: Prayer Info & Weather */}
@@ -966,6 +987,61 @@ export default function HomeScreen() {
                 <Ionicons name="stop" size={18} color="#EF4444" />
               </Pressable>
             </View>
+          </View>
+        )}
+
+        {/* PROMINENT UPDATE CARD (HIGH VISIBILITY AT TOP) */}
+        {isUpdateBannerVisible && (
+          <View
+            style={[
+              styles.updateCard,
+              { marginTop: 14, marginBottom: 4 },
+              isDark ? styles.updateCardDark : styles.updateCardLight,
+            ]}>
+            <View style={styles.updateCardContent}>
+              <View style={styles.updateIconContainer}>
+                <Ionicons name="sparkles" size={22} color="#3B82F6" />
+              </View>
+              <View style={styles.updateTextContainer}>
+                <View style={styles.updateBadgeRow}>
+                  <Text style={[styles.updateTitle, { color: themeTextColor }]}>
+                    New Update Available
+                  </Text>
+                  <View style={styles.updateVersionBadge}>
+                    <Text style={styles.updateVersionBadgeText}>v1.0.2</Text>
+                  </View>
+                </View>
+                <Text style={[styles.updateDescription, { color: themeSecondaryTextColor }]}>
+                  Native background Adhan audio notifications and punctual exact prayer alarms.
+                </Text>
+              </View>
+              <Pressable
+                onPress={handleDismissUpdate}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss update banner"
+                style={styles.updateDismissButton}>
+                <Ionicons name="close" size={18} color={themeSecondaryTextColor} />
+              </Pressable>
+            </View>
+
+            <Pressable
+              onPress={handleApplyUpdate}
+              accessibilityRole="button"
+              accessibilityLabel="Download latest v1.0.2 APK from GitHub Releases"
+              style={({ pressed }) => [
+                styles.updateActionButton,
+                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+              ]}>
+              <LinearGradient
+                colors={['#2563EB', '#1D4ED8']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.updateGradientButton}>
+                <Ionicons name="cloud-download-outline" size={17} color="#FFFFFF" />
+                <Text style={styles.updateButtonText}>Download v1.0.2 APK</Text>
+              </LinearGradient>
+            </Pressable>
           </View>
         )}
 
@@ -1151,48 +1227,6 @@ export default function HomeScreen() {
           </View>
         </View>
 
-        {/* PERSISTENT UPDATE BUTTON (DISAPPEARS PERMANENTLY AFTER TAP) */}
-        {isUpdateBannerVisible && (
-          <View
-            style={[styles.updateCard, isDark ? styles.updateCardDark : styles.updateCardLight]}>
-            <View style={styles.updateCardContent}>
-              <View style={styles.updateIconContainer}>
-                <Ionicons name="sparkles" size={22} color="#3B82F6" />
-              </View>
-              <View style={styles.updateTextContainer}>
-                <View style={styles.updateBadgeRow}>
-                  <Text style={[styles.updateTitle, { color: themeTextColor }]}>
-                    New Update Available
-                  </Text>
-                  <View style={styles.updateVersionBadge}>
-                    <Text style={styles.updateVersionBadgeText}>v1.0.2</Text>
-                  </View>
-                </View>
-                <Text style={[styles.updateDescription, { color: themeSecondaryTextColor }]}>
-                  Native background Adhan audio notifications and punctual exact prayer alarms.
-                </Text>
-              </View>
-            </View>
-
-            <Pressable
-              onPress={handleApplyUpdate}
-              accessibilityRole="button"
-              accessibilityLabel="Download latest v1.0.2 APK from GitHub Releases"
-              style={({ pressed }) => [
-                styles.updateActionButton,
-                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
-              ]}>
-              <LinearGradient
-                colors={['#2563EB', '#1D4ED8']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.updateGradientButton}>
-                <Ionicons name="cloud-download-outline" size={17} color="#FFFFFF" />
-                <Text style={styles.updateButtonText}>Download v1.0.2 APK</Text>
-              </LinearGradient>
-            </Pressable>
-          </View>
-        )}
       </ScrollView>
 
       {/* POST-SALAH DU'A & ADHKAR MODAL */}
@@ -1850,5 +1884,25 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 14,
     fontWeight: '700',
+  },
+  heroUpdatePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(255, 255, 255, 0.22)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.35)',
+  },
+  heroUpdatePillText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  updateDismissButton: {
+    padding: 6,
+    marginLeft: 6,
   },
 });
