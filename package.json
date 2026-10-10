@@ -1,10 +1,11 @@
 {
   "name": "adhan-prayer-reminder",
   "main": "expo-router/entry",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "dependencies": {
     "@expo/ui": "~57.0.22",
     "@expo/vector-icons": "^15.0.2",
+    "@react-native-async-storage/async-storage": "2.2.0",
     "adhan": "^4.4.6",
     "expo": "~57.0.27",
     "expo-asset": "~57.0.19",

@@ -28,6 +28,9 @@ import {
   schedulePostPrayerDuaNotification,
   addNotificationResponseListener,
 } from '../services/notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const UPDATE_BUTTON_DISMISSED_KEY = '@sambayang_update_button_dismissed_v1.0.1';
 
 // Local Adhan audio files
 const standardAdhanAudio = require('../../assets/audio/adhan.mp3');
@@ -359,6 +362,38 @@ export default function HomeScreen() {
 
   // Track currently playing prayer name
   const [currentlyPlayingPrayer, setCurrentlyPlayingPrayer] = useState<PrayerName | null>(null);
+  const [isUpdateBannerVisible, setIsUpdateBannerVisible] = useState<boolean>(false);
+
+  // Load update button visibility from persistent storage
+  useEffect(() => {
+    let isMounted = true;
+    void (async () => {
+      try {
+        const dismissed = await AsyncStorage.getItem(UPDATE_BUTTON_DISMISSED_KEY);
+        if (!dismissed && isMounted) {
+          setIsUpdateBannerVisible(true);
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleApplyUpdate = async () => {
+    try {
+      await AsyncStorage.setItem(UPDATE_BUTTON_DISMISSED_KEY, 'true');
+      setIsUpdateBannerVisible(false);
+      Alert.alert(
+        'App Up to Date',
+        'You are running Sambayang Reminder v1.0.1 with the latest prayer times and Adhan auto-play fixes.'
+      );
+    } catch {
+      setIsUpdateBannerVisible(false);
+    }
+  };
 
   // Persistent tracking of last auto-played prayer key: "YYYY-MM-DD-PrayerName"
   const lastAutoPlayedKey = useRef<string | null>(null);
@@ -1108,6 +1143,49 @@ export default function HomeScreen() {
             })}
           </View>
         </View>
+
+        {/* PERSISTENT UPDATE BUTTON (DISAPPEARS PERMANENTLY AFTER TAP) */}
+        {isUpdateBannerVisible && (
+          <View
+            style={[styles.updateCard, isDark ? styles.updateCardDark : styles.updateCardLight]}>
+            <View style={styles.updateCardContent}>
+              <View style={styles.updateIconContainer}>
+                <Ionicons name="sparkles" size={22} color="#3B82F6" />
+              </View>
+              <View style={styles.updateTextContainer}>
+                <View style={styles.updateBadgeRow}>
+                  <Text style={[styles.updateTitle, { color: themeTextColor }]}>
+                    New Update Available
+                  </Text>
+                  <View style={styles.updateVersionBadge}>
+                    <Text style={styles.updateVersionBadgeText}>v1.0.1</Text>
+                  </View>
+                </View>
+                <Text style={[styles.updateDescription, { color: themeSecondaryTextColor }]}>
+                  Adhan auto-play engine fix, background audio support, and prayer notification improvements.
+                </Text>
+              </View>
+            </View>
+
+            <Pressable
+              onPress={handleApplyUpdate}
+              accessibilityRole="button"
+              accessibilityLabel="Update now and dismiss button permanently"
+              style={({ pressed }) => [
+                styles.updateActionButton,
+                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+              ]}>
+              <LinearGradient
+                colors={['#2563EB', '#1D4ED8']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.updateGradientButton}>
+                <Ionicons name="cloud-download-outline" size={17} color="#FFFFFF" />
+                <Text style={styles.updateButtonText}>Update to v1.0.1</Text>
+              </LinearGradient>
+            </Pressable>
+          </View>
+        )}
       </ScrollView>
 
       {/* POST-SALAH DU'A & ADHKAR MODAL */}
@@ -1674,5 +1752,96 @@ const styles = StyleSheet.create({
   },
   postSalahArrowBox: {
     marginLeft: 8,
+  },
+
+  // UPDATE CARD STYLES
+  updateCard: {
+    marginTop: 20,
+    marginBottom: 8,
+    borderRadius: 22,
+    padding: 18,
+    borderWidth: 1,
+    ...Platform.select({
+      ios: {
+        shadowColor: '#2563EB',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.15,
+        shadowRadius: 10,
+      },
+      android: {
+        elevation: 3,
+      },
+    }),
+  },
+  updateCardLight: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#DBEAFE',
+  },
+  updateCardDark: {
+    backgroundColor: '#0F172A',
+    borderColor: '#1E293B',
+  },
+  updateCardContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 14,
+    marginBottom: 14,
+  },
+  updateIconContainer: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: 'rgba(37, 99, 235, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 2,
+  },
+  updateTextContainer: {
+    flex: 1,
+  },
+  updateBadgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  updateTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: -0.2,
+  },
+  updateVersionBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+    backgroundColor: 'rgba(37, 99, 235, 0.18)',
+  },
+  updateVersionBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#3B82F6',
+  },
+  updateDescription: {
+    fontSize: 12,
+    fontWeight: '400',
+    lineHeight: 17,
+  },
+  updateActionButton: {
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  updateGradientButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+  },
+  updateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
   },
 });
