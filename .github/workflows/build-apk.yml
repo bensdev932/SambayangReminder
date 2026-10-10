@@ -42,8 +42,8 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Install Node Dependencies
         run: npm ci
@@ -64,8 +64,10 @@ jobs:
         run: |
           mkdir -p release-artifacts
           TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
-          cp android/app/build/outputs/apk/release/app-release.apk "release-artifacts/SambayangReminder-${TAG}.apk"
-          cp android/app/build/outputs/apk/release/app-release.apk "release-artifacts/SambayangReminder.apk"
+          APK_PATH=$(find android/app/build/outputs/apk/ -name "*.apk" | head -n 1)
+          echo "Found APK at: $APK_PATH"
+          cp "$APK_PATH" "release-artifacts/SambayangReminder-${TAG}.apk"
+          cp "$APK_PATH" "release-artifacts/SambayangReminder.apk"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
 
       - name: Upload Build Artifact
