@@ -71,4 +71,24 @@ Docs: https://docs.expo.dev/eas/index.md
 - **Development Build Execution**: When building with `expo-dev-client` or EAS (`eas build`), `isRunningInExpoGo()` evaluates to `false`, activating native services.
 - **Exact Alarms & Background Tasks**: For scheduled prayer calls and Adhan playback, configure `SCHEDULE_EXACT_ALARM` permissions in `app.json` and use an Expo config plugin to copy local audio files into `android/app/src/main/res/raw/`.
 
+### 6. Universal Clean-Room CI Parity & Ambient Assets
+- **Zero Ephemeral Dependencies**: CI runners are clean-room environments. Never rely on gitignored stubs (e.g. `expo-env.d.ts`), developer machine caches, or ambient IDE files for builds, tests, or typechecks.
+- **Ambient Asset Typing**: When importing non-code assets (`.css`, `.module.css`, audio, fonts, vectors), commit explicit ambient type declarations in tracked files (e.g. `src/types/declarations.d.ts`) and ensure `tsconfig.json` explicitly includes `"**/*.d.ts"`.
+- **Node Test Runner Parity**: With Node 20+ ESM TypeScript test suites, always run tests via `tsx --test` to avoid `ERR_UNKNOWN_FILE_EXTENSION` on clean runners without global loaders.
+
+### 7. Atomic SemVer Release & Tagging Protocol
+- **Deterministic 5-Step Order**:
+  1. Synchronize all version manifests (`package.json`, `app.json`, etc.).
+  2. Execute verification triad (`npm test`, `npx tsc --noEmit`, `npx expo lint`).
+  3. Commit version bumps atomically (`git commit -m "chore(release): bump version to vX.Y.Z"`). Never create empty commits.
+  4. Tag the bump commit (`git tag vX.Y.Z`).
+  5. Push the branch commit, then push the tag.
+- **Single Canonical Release Pipeline**: Maintain exactly ONE CI workflow listening to release tag triggers (`push.tags: ['v*']`). Duplicate release workflows create race conditions and release collision errors.
+- **Failed Release Recovery**: If CI fails post-tag, fix code on the branch, commit, re-point tag locally (`git tag -f vX.Y.Z`), push branch, and force-push tag (`git push -f origin vX.Y.Z`).
+
+### 8. The Binary Horizon & Client Distribution Rules
+- **The Binary Horizon Law**: A compiled client binary (APK, IPA, executable) is frozen at compile time. Version `N` cannot run code or features introduced in `N+1`. Upgrading from an un-instrumented client requires a one-time manual install of the instrumented binary.
+- **Aggressive Cache Invalidation**: Release check requests must append query timestamps (`?_t=${Date.now()}`) and include `Cache-Control: no-cache, no-store, must-revalidate` headers to prevent mobile HTTP caches (OkHttp/URLSession) from serving stale release data.
+- **Multi-Modal Discovery**: Provide at least 3 update discovery vectors: startup silent check, pull-to-refresh / manual user gesture, and on-demand modal check.
+
 
