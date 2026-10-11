@@ -1,24 +1,24 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import { Ionicons } from '@expo/vector-icons';
+import { isRunningInExpoGo } from 'expo';
+import { LinearGradient } from 'expo-linear-gradient';
+import { useCallback, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
   Modal,
-  View,
-  Text,
-  StyleSheet,
+  Platform,
   Pressable,
   ScrollView,
-  ActivityIndicator,
-  Platform,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
-import { LinearGradient } from 'expo-linear-gradient';
-import { isRunningInExpoGo } from 'expo';
 import {
   checkForUpdate,
   downloadUpdateApk,
-  installUpdateApk,
   getCurrentAppVersion,
-  type UpdateCheckResult,
+  installUpdateApk,
   type DownloadProgressInfo,
+  type UpdateCheckResult,
 } from '../services/update-service';
 
 export interface InAppUpdateModalProps {
@@ -122,8 +122,8 @@ export function InAppUpdateModal({
           : res.message || 'Failed to launch installer. Please grant unknown app installation permission in Settings.'
       );
     } else {
-      // Installation intent was fired successfully
-      setStatus('downloaded');
+
+      setStatus('downloaded');      // Installation intent was fired successfully
     }
   };
 

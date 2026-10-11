@@ -553,7 +553,20 @@ export default function HomeScreen() {
 
   const onRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    await fetchLocationAndWeather();
+    await Promise.allSettled([
+      fetchLocationAndWeather(),
+      (async () => {
+        try {
+          const result = await checkForUpdate();
+          setUpdateCheckResult(result);
+          if (result.hasUpdate && result.latestVersion) {
+            setIsUpdateBannerVisible(true);
+          }
+        } catch {
+          // Ignore network errors gracefully on pull-to-refresh
+        }
+      })(),
+    ]);
     setIsRefreshing(false);
   }, [fetchLocationAndWeather]);
 

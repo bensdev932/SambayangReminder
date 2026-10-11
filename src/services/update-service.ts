@@ -74,12 +74,14 @@ export async function checkForUpdate(options?: CheckUpdateOptions): Promise<Upda
   const owner = options?.owner ?? GITHUB_REPO_OWNER;
   const repo = options?.repo ?? GITHUB_REPO_NAME;
   const currentVersion = options?.currentVersion ?? getCurrentAppVersion();
-  const endpoint = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
+  const endpoint = `https://api.github.com/repos/${owner}/${repo}/releases/latest?_t=${Date.now()}`;
 
   const headers: Record<string, string> = {
     Accept: 'application/vnd.github+json',
     'User-Agent': 'SambayangReminder-InAppUpdater',
     'X-GitHub-Api-Version': '2022-11-28',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    Pragma: 'no-cache',
   };
 
   if (options?.githubToken) {
