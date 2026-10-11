@@ -1,7 +1,7 @@
 {
   "name": "adhan-prayer-reminder",
   "main": "expo-router/entry",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "dependencies": {
     "@expo/ui": "~57.0.22",
     "@expo/vector-icons": "^15.0.2",
@@ -52,7 +52,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test": "tsx --test scripts/test-animated-icon.mjs scripts/test-update-service.mjs scripts/test-css-assets.mjs",
+    "test": "tsx --test scripts/test-animated-icon.mjs scripts/test-update-service.mjs scripts/test-css-assets.mjs scripts/test-adhan-alarm.mjs",
     "test:animated-icon": "tsx --test scripts/test-animated-icon.mjs",
     "test:update-service": "tsx --test scripts/test-update-service.mjs",
     "test:css": "tsx --test scripts/test-css-assets.mjs",

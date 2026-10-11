@@ -53,10 +53,14 @@ export async function setupNotificationChannel(): Promise<void> {
       description: 'Plays the Adhan call to prayer at each prescribed prayer time.',
       importance: Notifications.AndroidImportance.MAX,
       sound: 'adhan', // Refers to res/raw/adhan.mp3
+      audioAttributes: {
+        usage: Notifications.AndroidAudioUsage.ALARM,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+      },
       vibrationPattern: [0, 500, 250, 500],
       lightColor: '#2563EB',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: false,
+      bypassDnd: true,
     });
 
     // 2. Fajr Adhan Channel (Special As-Salatu khayrun minan-nawm recitation)
@@ -65,10 +69,14 @@ export async function setupNotificationChannel(): Promise<void> {
       description: 'Plays the Fajr Adhan call to prayer at dawn.',
       importance: Notifications.AndroidImportance.MAX,
       sound: 'fajr_adhan', // Refers to res/raw/fajr_adhan.mp3
+      audioAttributes: {
+        usage: Notifications.AndroidAudioUsage.ALARM,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
+      },
       vibrationPattern: [0, 500, 250, 500],
       lightColor: '#10B981',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: false,
+      bypassDnd: true,
     });
 
     // 3. Post-Salah Du'a & Adhkar Channel

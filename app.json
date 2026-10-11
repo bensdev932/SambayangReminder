@@ -2,7 +2,7 @@
   "expo": {
     "name": "Adhan & Prayer Reminder",
     "slug": "SambayangReminder",
-    "version": "1.0.3",
+    "version": "1.0.4",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "adhanprayerreminder",
@@ -38,6 +38,7 @@
     "plugins": [
       "expo-file-system",
       "./plugins/withNotificationSounds",
+      "./plugins/withAdhanAlarm",
       "expo-router",
       [
         "expo-splash-screen",

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   ActivityIndicator,
   Alert,
+  AppState,
   Platform,
   Pressable,
   RefreshControl,
@@ -34,6 +35,15 @@ import {
   schedulePostPrayerDuaNotification,
   addNotificationResponseListener,
 } from '../services/notifications';
+import {
+  schedulePrayerAlarm,
+  cancelAllPrayerAlarms,
+  getAdhanPlaybackStatus,
+  stopCurrentAdhan,
+  isBatteryOptimizationIgnored,
+  requestIgnoreBatteryOptimizations,
+  addAdhanPlaybackListener,
+} from '../services/adhan-alarm';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Local Adhan audio files
@@ -371,6 +381,87 @@ export default function HomeScreen() {
   const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResult | null>(null);
   const [isUpdateBannerVisible, setIsUpdateBannerVisible] = useState<boolean>(false);
 
+  // Background Adhan Native Service sync & Battery Optimization state
+  const [isNativeAdhanPlaying, setIsNativeAdhanPlaying] = useState<boolean>(false);
+  const [isBatteryOptiIgnored, setIsBatteryOptiIgnored] = useState<boolean>(true);
+  const [isBatteryBannerDismissed, setIsBatteryBannerDismissed] = useState<boolean>(false);
+
+  // Synchronize native background Adhan service state with in-app UI
+  useEffect(() => {
+    let isMounted = true;
+    const syncStatus = async () => {
+      try {
+        const status = await getAdhanPlaybackStatus();
+        if (isMounted) {
+          setIsNativeAdhanPlaying(status.isPlaying);
+          if (status.isPlaying && status.prayerName) {
+            setCurrentlyPlayingPrayer(status.prayerName as PrayerName);
+          }
+        }
+      } catch {}
+    };
+
+    void syncStatus();
+
+    const appStateSub = AppState.addEventListener('change', (nextState) => {
+      if (nextState === 'active') {
+        void syncStatus();
+      }
+    });
+
+    const unsubscribeNativeEvents = addAdhanPlaybackListener({
+      onStarted: (prayer) => {
+        if (isMounted) {
+          setIsNativeAdhanPlaying(true);
+          setCurrentlyPlayingPrayer(prayer as PrayerName);
+        }
+      },
+      onStopped: () => {
+        if (isMounted) {
+          setIsNativeAdhanPlaying(false);
+          setCurrentlyPlayingPrayer(null);
+        }
+      },
+    });
+
+    return () => {
+      isMounted = false;
+      appStateSub.remove();
+      unsubscribeNativeEvents();
+    };
+  }, []);
+
+  // Check Android Battery Optimization status for background alarms
+  useEffect(() => {
+    let isMounted = true;
+    void (async () => {
+      try {
+        const ignored = await isBatteryOptimizationIgnored();
+        if (isMounted) {
+          setIsBatteryOptiIgnored(ignored);
+        }
+        const dismissed = await AsyncStorage.getItem('@sambayang_battery_banner_dismissed');
+        if (isMounted && dismissed === 'true') {
+          setIsBatteryBannerDismissed(true);
+        }
+      } catch {}
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const handleRequestBatteryOptimization = async () => {
+    await requestIgnoreBatteryOptimizations();
+    const ignored = await isBatteryOptimizationIgnored();
+    setIsBatteryOptiIgnored(ignored);
+  };
+
+  const handleDismissBatteryBanner = async () => {
+    setIsBatteryBannerDismissed(true);
+    await AsyncStorage.setItem('@sambayang_battery_banner_dismissed', 'true');
+  };
+
   // Check for updates in the background on startup
   useEffect(() => {
     let isMounted = true;
@@ -680,7 +771,7 @@ export default function HomeScreen() {
 
   const isStandardPlaying = Boolean(standardStatus?.playing);
   const isFajrPlaying = Boolean(fajrStatus?.playing);
-  const isAudioPlaying = isStandardPlaying || isFajrPlaying;
+  const isAudioPlaying = isStandardPlaying || isFajrPlaying || isNativeAdhanPlaying;
 
   const activePlayer = isFajrPlaying
     ? fajrPlayer
@@ -711,6 +802,7 @@ export default function HomeScreen() {
       try {
         if (!isNotificationsEnabled) {
           await cancelAllPrayerNotifications();
+          await cancelAllPrayerAlarms();
           return;
         }
 
@@ -721,12 +813,14 @@ export default function HomeScreen() {
 
         // Cancel previous to prevent duplicate schedules
         await cancelAllPrayerNotifications();
+        await cancelAllPrayerAlarms();
 
         const now = new Date();
         for (const prayer of prayerData.prayersList) {
           if (prayer.time.getTime() > now.getTime() && !isCancelled) {
             await schedulePrayerNotification(prayer.name, prayer.time, locationName);
             await schedulePostPrayerDuaNotification(prayer.name, prayer.time, locationName);
+            await schedulePrayerAlarm(prayer.name, prayer.time, prayer.name === 'Fajr');
           }
         }
       } catch {
@@ -820,6 +914,9 @@ export default function HomeScreen() {
         );
         return;
       }
+    } else {
+      await cancelAllPrayerNotifications();
+      await cancelAllPrayerAlarms();
     }
 
     Alert.alert(
@@ -830,11 +927,10 @@ export default function HomeScreen() {
     );
   };
 
-  const handleToggleAdhan = () => {
+  const handleToggleAdhan = async () => {
     try {
       if (isAudioPlaying) {
-        standardPlayer.pause();
-        fajrPlayer.pause();
+        await handleStopAdhan();
       } else {
         activePlayer.play();
       }
@@ -843,8 +939,10 @@ export default function HomeScreen() {
     }
   };
 
-  const handleStopAdhan = () => {
+  const handleStopAdhan = async () => {
     try {
+      await stopCurrentAdhan();
+      setIsNativeAdhanPlaying(false);
       fajrPlayer.pause();
       fajrPlayer.seekTo(0);
       standardPlayer.pause();
@@ -1083,6 +1181,58 @@ export default function HomeScreen() {
                 <Ionicons name="cloud-download-outline" size={17} color="#FFFFFF" />
                 <Text style={styles.updateButtonText}>
                   Update to v{updateCheckResult.latestVersion}
+                </Text>
+              </LinearGradient>
+            </Pressable>
+          </View>
+        )}
+
+        {/* ANDROID BATTERY OPTIMIZATION EXEMPTION BANNER */}
+        {!isBatteryOptiIgnored && !isBatteryBannerDismissed && (
+          <View
+            style={[
+              styles.batteryBannerCard,
+              { marginTop: 12, marginBottom: 4 },
+              isDark ? styles.batteryCardDark : styles.batteryCardLight,
+            ]}>
+            <View style={styles.batteryCardContent}>
+              <View style={styles.batteryIconContainer}>
+                <Ionicons name="battery-charging-outline" size={22} color="#F59E0B" />
+              </View>
+              <View style={styles.batteryTextContainer}>
+                <Text style={[styles.batteryTitle, { color: themeTextColor }]}>
+                  Unrestricted Adhan Alarms
+                </Text>
+                <Text style={[styles.batteryDescription, { color: themeSecondaryTextColor }]}>
+                  Exempt Sambayang Reminder from battery optimization so the Adhan always sounds on time when locked.
+                </Text>
+              </View>
+              <Pressable
+                onPress={handleDismissBatteryBanner}
+                hitSlop={10}
+                accessibilityRole="button"
+                accessibilityLabel="Dismiss battery optimization banner"
+                style={styles.batteryDismissButton}>
+                <Ionicons name="close" size={18} color={themeSecondaryTextColor} />
+              </Pressable>
+            </View>
+
+            <Pressable
+              onPress={handleRequestBatteryOptimization}
+              accessibilityRole="button"
+              accessibilityLabel="Exempt from battery optimization"
+              style={({ pressed }) => [
+                styles.batteryActionButton,
+                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+              ]}>
+              <LinearGradient
+                colors={['#D97706', '#B45309']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.batteryGradientButton}>
+                <Ionicons name="shield-checkmark-outline" size={17} color="#FFFFFF" />
+                <Text style={styles.batteryButtonText}>
+                  Allow Background Alarms
                 </Text>
               </LinearGradient>
             </Pressable>
@@ -1960,5 +2110,68 @@ const styles = StyleSheet.create({
   updateDismissButton: {
     padding: 6,
     marginLeft: 6,
+  },
+  batteryBannerCard: {
+    padding: 14,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginHorizontal: 16,
+  },
+  batteryCardLight: {
+    backgroundColor: '#FFFBEB',
+    borderColor: '#FDE68A',
+  },
+  batteryCardDark: {
+    backgroundColor: '#1E1B18',
+    borderColor: '#78350F',
+  },
+  batteryCardContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+  },
+  batteryIconContainer: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  batteryTextContainer: {
+    flex: 1,
+  },
+  batteryTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 3,
+  },
+  batteryDescription: {
+    fontSize: 12,
+    fontWeight: '400',
+    lineHeight: 17,
+  },
+  batteryDismissButton: {
+    padding: 6,
+    marginLeft: 6,
+  },
+  batteryActionButton: {
+    borderRadius: 14,
+    overflow: 'hidden',
+  },
+  batteryGradientButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 14,
+  },
+  batteryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '700',
   },
 });
