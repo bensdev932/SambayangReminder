@@ -141,6 +141,39 @@ export async function requestIgnoreBatteryOptimizations(): Promise<boolean> {
 }
 
 /**
+ * Check whether Sambayang Reminder has permission to schedule exact alarms (Android 12+ / API 31+).
+ */
+export async function canScheduleExactAlarms(): Promise<boolean> {
+  if (!isNativeAlarmAvailable()) {
+    return true; // iOS, Expo Go, Web do not impose Android exact alarm permissions
+  }
+
+  try {
+    const canSchedule: boolean = await AdhanAlarmModule.canScheduleExactAlarms();
+    return canSchedule;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Open the native Android system settings page for "Alarms & reminders" (SCHEDULE_EXACT_ALARM).
+ */
+export async function requestScheduleExactAlarmPermission(): Promise<boolean> {
+  if (!isNativeAlarmAvailable()) {
+    return false;
+  }
+
+  try {
+    const requested: boolean = await AdhanAlarmModule.requestScheduleExactAlarmPermission();
+    return requested;
+  } catch (error) {
+    console.warn('[AdhanAlarm] Failed to request exact alarm permission:', error);
+    return false;
+  }
+}
+
+/**
  * Subscribe to native background Adhan start and stop events to keep the in-app UI 100% synchronized.
  */
 export function addAdhanPlaybackListener(

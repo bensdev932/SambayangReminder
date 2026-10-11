@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
+import com.ben.adhanprayerreminder.MainActivity
 import com.facebook.react.bridge.Arguments
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
@@ -22,7 +23,7 @@ import org.json.JSONObject
 
 /**
  * React Native Module providing programmatic scheduling of exact prayer alarms,
- * background playback queries, cancellation, and battery optimization requests.
+ * background playback queries, cancellation, exact alarm permissions, and battery optimization requests.
  */
 class AdhanAlarmModule(reactContext: ReactApplicationContext) :
     ReactContextBaseJavaModule(reactContext) {
@@ -111,23 +112,62 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
 
+            val showIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                putExtra("prayerName", prayerName)
+            }
+            val showPendingIntent = PendingIntent.getActivity(
+                context,
+                requestCode,
+                showIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
             try {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    alarmManager.setExactAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        timestampMs,
-                        pendingIntent
-                    )
+                val canScheduleExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    alarmManager.canScheduleExactAlarms()
                 } else {
-                    alarmManager.setExact(
+                    true
+                }
+
+                if (canScheduleExact) {
+                    // AlarmClockInfo guarantees waking the device from Doze mode
+                    val alarmClockInfo = AlarmManager.AlarmClockInfo(timestampMs, showPendingIntent)
+                    alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
+                    Log.d(TAG, "Scheduled alarm clock for $prayerName at $timestampMs (code $requestCode)")
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    // Fallback to setAndAllowWhileIdle if exact alarm permission not granted
+                    alarmManager.setAndAllowWhileIdle(
                         AlarmManager.RTC_WAKEUP,
                         timestampMs,
                         pendingIntent
                     )
+                    Log.d(TAG, "Exact alarms not permitted. Scheduled fallback setAndAllowWhileIdle for $prayerName at $timestampMs")
+                } else {
+                    alarmManager.set(
+                        AlarmManager.RTC_WAKEUP,
+                        timestampMs,
+                        pendingIntent
+                    )
+                    Log.d(TAG, "Scheduled standard alarm for $prayerName at $timestampMs")
                 }
-                Log.d(TAG, "Scheduled exact alarm for $prayerName at $timestampMs (code $requestCode)")
+            } catch (e: SecurityException) {
+                Log.w(TAG, "SecurityException scheduling exact alarm for $prayerName. Falling back to setAndAllowWhileIdle: ${e.message}")
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        alarmManager.setAndAllowWhileIdle(
+                            AlarmManager.RTC_WAKEUP,
+                            timestampMs,
+                            pendingIntent
+                        )
+                    } else {
+                        alarmManager.set(AlarmManager.RTC_WAKEUP, timestampMs, pendingIntent)
+                    }
+                } catch (fallbackErr: Exception) {
+                    Log.e(TAG, "Failed fallback alarm scheduling for $prayerName: ${fallbackErr.message}", fallbackErr)
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to set exact alarm for $prayerName: ${e.message}", e)
+                Log.e(TAG, "Failed to set alarm for $prayerName: ${e.message}", e)
             }
         }
 
@@ -158,6 +198,49 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
                 ?.emit(eventName, params)
         } catch (e: Exception) {
             Log.w(TAG, "Failed to emit event $eventName to JS: ${e.message}")
+        }
+    }
+
+    @ReactMethod
+    fun canScheduleExactAlarms(promise: Promise) {
+        try {
+            val alarmManager =
+                reactApplicationContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val canSchedule = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                alarmManager.canScheduleExactAlarms()
+            } else {
+                true
+            }
+            promise.resolve(canSchedule)
+        } catch (e: Exception) {
+            promise.resolve(false)
+        }
+    }
+
+    @ReactMethod
+    fun requestScheduleExactAlarmPermission(promise: Promise) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val intent = Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                    data = Uri.parse("package:${reactApplicationContext.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                reactApplicationContext.startActivity(intent)
+                promise.resolve(true)
+            } else {
+                promise.resolve(true)
+            }
+        } catch (e: Exception) {
+            try {
+                val fallbackIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:${reactApplicationContext.packageName}")
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                reactApplicationContext.startActivity(fallbackIntent)
+                promise.resolve(true)
+            } catch (fallbackError: Exception) {
+                promise.reject("EXACT_ALARM_PERMISSION_ERROR", fallbackError.message, fallbackError)
+            }
         }
     }
 

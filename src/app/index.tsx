@@ -42,6 +42,8 @@ import {
   stopCurrentAdhan,
   isBatteryOptimizationIgnored,
   requestIgnoreBatteryOptimizations,
+  canScheduleExactAlarms,
+  requestScheduleExactAlarmPermission,
   addAdhanPlaybackListener,
 } from '../services/adhan-alarm';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -431,14 +433,17 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Check Android Battery Optimization status for background alarms
+  // Check Android Background execution permissions (Battery Optimization + Exact Alarms)
   useEffect(() => {
     let isMounted = true;
     void (async () => {
       try {
-        const ignored = await isBatteryOptimizationIgnored();
+        const [ignored, canExact] = await Promise.all([
+          isBatteryOptimizationIgnored(),
+          canScheduleExactAlarms(),
+        ]);
         if (isMounted) {
-          setIsBatteryOptiIgnored(ignored);
+          setIsBatteryOptiIgnored(ignored && canExact);
         }
         const dismissed = await AsyncStorage.getItem('@sambayang_battery_banner_dismissed');
         if (isMounted && dismissed === 'true') {
@@ -452,9 +457,16 @@ export default function HomeScreen() {
   }, []);
 
   const handleRequestBatteryOptimization = async () => {
+    const canExact = await canScheduleExactAlarms();
+    if (!canExact) {
+      await requestScheduleExactAlarmPermission();
+    }
     await requestIgnoreBatteryOptimizations();
-    const ignored = await isBatteryOptimizationIgnored();
-    setIsBatteryOptiIgnored(ignored);
+    const [ignored, updatedCanExact] = await Promise.all([
+      isBatteryOptimizationIgnored(),
+      canScheduleExactAlarms(),
+    ]);
+    setIsBatteryOptiIgnored(ignored && updatedCanExact);
   };
 
   const handleDismissBatteryBanner = async () => {
@@ -1204,7 +1216,7 @@ export default function HomeScreen() {
                   Unrestricted Adhan Alarms
                 </Text>
                 <Text style={[styles.batteryDescription, { color: themeSecondaryTextColor }]}>
-                  Exempt Sambayang Reminder from battery optimization so the Adhan always sounds on time when locked.
+                  Exempt Sambayang Reminder from battery optimization and allow exact alarms so the Adhan always sounds on time when locked.
                 </Text>
               </View>
               <Pressable

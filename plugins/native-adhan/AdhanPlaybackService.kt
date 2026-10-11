@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.os.Build
@@ -92,7 +93,15 @@ class AdhanPlaybackService : Service() {
 
         // 2. Build ongoing notification with Stop action
         val notification = buildAlarmNotification(prayerName)
-        startForeground(NOTIFICATION_ID, notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
 
         // 3. Initialize MediaPlayer on the ALARM stream
         try {
@@ -232,6 +241,9 @@ class AdhanPlaybackService : Service() {
                 vibrationPattern = longArrayOf(0, 500, 250, 500)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
                 setBypassDnd(true)
+                setShowBadge(true)
+                enableLights(true)
+                lightColor = android.graphics.Color.BLUE
             }
 
             val manager = getSystemService(NotificationManager::class.java)

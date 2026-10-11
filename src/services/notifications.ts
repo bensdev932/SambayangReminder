@@ -58,7 +58,10 @@ export async function setupNotificationChannel(): Promise<void> {
         contentType: Notifications.AndroidAudioContentType.SONIFICATION,
       },
       vibrationPattern: [0, 500, 250, 500],
+      enableVibrate: true,
+      enableLights: true,
       lightColor: '#2563EB',
+      showBadge: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
     });
@@ -74,7 +77,10 @@ export async function setupNotificationChannel(): Promise<void> {
         contentType: Notifications.AndroidAudioContentType.SONIFICATION,
       },
       vibrationPattern: [0, 500, 250, 500],
+      enableVibrate: true,
+      enableLights: true,
       lightColor: '#10B981',
+      showBadge: true,
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
       bypassDnd: true,
     });
@@ -86,7 +92,11 @@ export async function setupNotificationChannel(): Promise<void> {
       importance: Notifications.AndroidImportance.DEFAULT,
       sound: 'default',
       vibrationPattern: [0, 250, 250, 250],
+      enableVibrate: true,
+      enableLights: true,
       lightColor: '#8B5CF6',
+      showBadge: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     });
 
     console.log('[Notifications] All native Adhan notification channels registered successfully.');
@@ -148,6 +158,7 @@ export async function schedulePrayerNotification(
         body,
         sound: soundName,
         priority: Notifications.AndroidNotificationPriority.MAX,
+        vibrate: [0, 500, 250, 500],
         data: {
           type: 'adhan_prayer',
           prayerName,

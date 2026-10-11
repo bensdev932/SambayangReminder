@@ -81,24 +81,27 @@ const withAdhanAlarm = (config) => {
       }
 
       // Check if AdhanBootReceiver already exists
-      const hasBootReceiver = application.receiver.some(
+      const bootActions = [
+        { $: { 'android:name': 'android.intent.action.BOOT_COMPLETED' } },
+        { $: { 'android:name': 'android.intent.action.QUICKBOOT_POWERON' } },
+        { $: { 'android:name': 'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED' } },
+        { $: { 'android:name': 'android.intent.action.TIME_SET' } },
+        { $: { 'android:name': 'android.intent.action.TIMEZONE_CHANGED' } },
+      ];
+
+      const existingBootReceiver = application.receiver.find(
         (r) => r.$['android:name'] === '.adhan.AdhanBootReceiver'
       );
-      if (!hasBootReceiver) {
+      if (!existingBootReceiver) {
         application.receiver.push({
           $: {
             'android:name': '.adhan.AdhanBootReceiver',
             'android:exported': 'true',
           },
-          'intent-filter': [
-            {
-              action: [
-                { $: { 'android:name': 'android.intent.action.BOOT_COMPLETED' } },
-                { $: { 'android:name': 'android.intent.action.QUICKBOOT_POWERON' } },
-              ],
-            },
-          ],
+          'intent-filter': [{ action: bootActions }],
         });
+      } else {
+        existingBootReceiver['intent-filter'] = [{ action: bootActions }];
       }
     }
 
