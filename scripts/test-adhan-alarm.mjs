@@ -68,20 +68,36 @@ test('Notification Channel importance & wake configuration verification', () => 
 });
 
 test('SCHEDULE_EXACT_ALARM permission and receiver verification', () => {
-  // Check AndroidManifest.xml permissions
+  // Check AndroidManifest.xml permissions if prebuilt, or check config plugin in clean CI
   const manifestPath = path.resolve('android/app/src/main/AndroidManifest.xml');
-  const manifest = fs.readFileSync(manifestPath, 'utf8');
+  if (fs.existsSync(manifestPath)) {
+    const manifest = fs.readFileSync(manifestPath, 'utf8');
 
-  assert.ok(manifest.includes('android.permission.SCHEDULE_EXACT_ALARM'), 'Must request SCHEDULE_EXACT_ALARM');
-  assert.ok(manifest.includes('android.permission.USE_EXACT_ALARM'), 'Must request USE_EXACT_ALARM');
-  assert.ok(manifest.includes('android.permission.WAKE_LOCK'), 'Must request WAKE_LOCK');
-  assert.ok(manifest.includes('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'), 'Must request FOREGROUND_SERVICE_MEDIA_PLAYBACK');
+    assert.ok(manifest.includes('android.permission.SCHEDULE_EXACT_ALARM'), 'Must request SCHEDULE_EXACT_ALARM');
+    assert.ok(manifest.includes('android.permission.USE_EXACT_ALARM'), 'Must request USE_EXACT_ALARM');
+    assert.ok(manifest.includes('android.permission.WAKE_LOCK'), 'Must request WAKE_LOCK');
+    assert.ok(manifest.includes('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'), 'Must request FOREGROUND_SERVICE_MEDIA_PLAYBACK');
 
-  // Verify AdhanBootReceiver handles SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED
-  assert.ok(
-    manifest.includes('android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED'),
-    'AdhanBootReceiver must listen for exact alarm permission changes'
-  );
+    // Verify AdhanBootReceiver handles SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED
+    assert.ok(
+      manifest.includes('android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED'),
+      'AdhanBootReceiver must listen for exact alarm permission changes'
+    );
+  } else {
+    // In clean-room CI runners before 'expo prebuild', verify the canonical config plugin
+    const pluginPath = path.resolve('plugins/withAdhanAlarm.js');
+    assert.ok(fs.existsSync(pluginPath), 'plugins/withAdhanAlarm.js must exist');
+    const pluginCode = fs.readFileSync(pluginPath, 'utf8');
+
+    assert.ok(pluginCode.includes('android.permission.SCHEDULE_EXACT_ALARM'), 'Plugin must request SCHEDULE_EXACT_ALARM');
+    assert.ok(pluginCode.includes('android.permission.USE_EXACT_ALARM'), 'Plugin must request USE_EXACT_ALARM');
+    assert.ok(pluginCode.includes('android.permission.WAKE_LOCK'), 'Plugin must request WAKE_LOCK');
+    assert.ok(pluginCode.includes('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'), 'Plugin must request FOREGROUND_SERVICE_MEDIA_PLAYBACK');
+    assert.ok(
+      pluginCode.includes('android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED'),
+      'Plugin must register receiver for exact alarm permission changes'
+    );
+  }
 
   // Check app.json permission declarations
   const appJsonPath = path.resolve('app.json');
@@ -96,8 +112,16 @@ test('SCHEDULE_EXACT_ALARM permission and receiver verification', () => {
 });
 
 test('Native Kotlin AlarmModule & PlaybackService integrity', () => {
-  const modulePath = path.resolve('android/app/src/main/java/com/ben/adhanprayerreminder/adhan/AdhanAlarmModule.kt');
-  const servicePath = path.resolve('android/app/src/main/java/com/ben/adhanprayerreminder/adhan/AdhanPlaybackService.kt');
+  const generatedModulePath = path.resolve('android/app/src/main/java/com/ben/adhanprayerreminder/adhan/AdhanAlarmModule.kt');
+  const sourceModulePath = path.resolve('plugins/native-adhan/AdhanAlarmModule.kt');
+  const modulePath = fs.existsSync(generatedModulePath) ? generatedModulePath : sourceModulePath;
+
+  const generatedServicePath = path.resolve('android/app/src/main/java/com/ben/adhanprayerreminder/adhan/AdhanPlaybackService.kt');
+  const sourceServicePath = path.resolve('plugins/native-adhan/AdhanPlaybackService.kt');
+  const servicePath = fs.existsSync(generatedServicePath) ? generatedServicePath : sourceServicePath;
+
+  assert.ok(fs.existsSync(modulePath), `AdhanAlarmModule must exist at ${modulePath}`);
+  assert.ok(fs.existsSync(servicePath), `AdhanPlaybackService must exist at ${servicePath}`);
 
   const moduleCode = fs.readFileSync(modulePath, 'utf8');
   const serviceCode = fs.readFileSync(servicePath, 'utf8');
