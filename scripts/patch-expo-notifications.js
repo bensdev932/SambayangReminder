@@ -78,10 +78,40 @@ if (!fs.existsSync(moduleScriptsDir)) {
   fs.mkdirSync(moduleScriptsDir, { recursive: true });
 }
 const stubPackageJson = path.join(moduleScriptsDir, 'package.json');
-if (!fs.existsSync(stubPackageJson)) {
-  fs.writeFileSync(stubPackageJson, JSON.stringify({ name: 'expo-module-scripts', version: '1.0.0', main: 'tsconfig.base.json' }, null, 2));
-}
+fs.writeFileSync(
+  stubPackageJson,
+  JSON.stringify(
+    {
+      name: 'expo-module-scripts',
+      version: '1.0.0',
+      main: 'tsconfig.base.json',
+      exports: {
+        './tsconfig.base': './tsconfig.base.json',
+        './tsconfig.base.json': './tsconfig.base.json',
+      },
+    },
+    null,
+    2
+  )
+);
 const stubTsconfig = path.join(moduleScriptsDir, 'tsconfig.base.json');
-if (!fs.existsSync(stubTsconfig)) {
-  fs.writeFileSync(stubTsconfig, JSON.stringify({ compilerOptions: { target: 'esnext', module: 'esnext', skipLibCheck: true } }, null, 2));
+const baseConfigContent = JSON.stringify(
+  { compilerOptions: { target: 'esnext', module: 'esnext', skipLibCheck: true } },
+  null,
+  2
+);
+fs.writeFileSync(stubTsconfig, baseConfigContent);
+const stubTsconfigNoExt = path.join(moduleScriptsDir, 'tsconfig.base');
+fs.writeFileSync(stubTsconfigNoExt, baseConfigContent);
+
+// 5. Patch expo-notifications/tsconfig.json directly to extend expo/tsconfig.base
+const notificationsTsconfig = path.join(notificationsPkgDir, 'tsconfig.json');
+if (fs.existsSync(notificationsTsconfig)) {
+  let tsconfigContent = fs.readFileSync(notificationsTsconfig, 'utf8');
+  if (tsconfigContent.includes('expo-module-scripts/tsconfig.base')) {
+    tsconfigContent = tsconfigContent.replace('expo-module-scripts/tsconfig.base', 'expo/tsconfig.base');
+    fs.writeFileSync(notificationsTsconfig, tsconfigContent, 'utf8');
+    console.log('[patch-expo-notifications] Patched expo-notifications/tsconfig.json successfully.');
+  }
 }
+

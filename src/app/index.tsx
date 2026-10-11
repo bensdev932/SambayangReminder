@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
   ActivityIndicator,
   Alert,
-  Linking,
   Platform,
   Pressable,
   RefreshControl,
@@ -20,6 +19,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { Coordinates, CalculationMethod, Madhab, PrayerTimes } from 'adhan';
 import { MonthWindowCountdown } from '../components/month-window-countdown';
 import { PostSalahDuaModal } from '../components/post-salah-dua-modal';
+import { InAppUpdateModal } from '../components/in-app-update-modal';
+import {
+  checkForUpdate,
+  getCurrentAppVersion,
+  type UpdateCheckResult,
+} from '../services/update-service';
 import {
   initNotificationHandler,
   setupNotificationChannel,
@@ -30,9 +35,6 @@ import {
   addNotificationResponseListener,
 } from '../services/notifications';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const GITHUB_RELEASES_URL = 'https://github.com/bensdev932/SambayangReminder/releases/latest';
-const UPDATE_BUTTON_DISMISSED_KEY = '@sambayang_update_button_dismissed_v1.0.2';
 
 // Local Adhan audio files
 const standardAdhanAudio = require('../../assets/audio/adhan.mp3');
@@ -364,19 +366,29 @@ export default function HomeScreen() {
 
   // Track currently playing prayer name
   const [currentlyPlayingPrayer, setCurrentlyPlayingPrayer] = useState<PrayerName | null>(null);
-  const [isUpdateBannerVisible, setIsUpdateBannerVisible] = useState<boolean>(true);
+  const currentAppVersion = getCurrentAppVersion();
+  const [isUpdateModalVisible, setIsUpdateModalVisible] = useState<boolean>(false);
+  const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResult | null>(null);
+  const [isUpdateBannerVisible, setIsUpdateBannerVisible] = useState<boolean>(false);
 
-  // Load update button visibility from persistent storage
+  // Check for updates in the background on startup
   useEffect(() => {
     let isMounted = true;
     void (async () => {
       try {
-        const dismissed = await AsyncStorage.getItem(UPDATE_BUTTON_DISMISSED_KEY);
-        if (dismissed === 'true' && isMounted) {
-          setIsUpdateBannerVisible(false);
+        const result = await checkForUpdate();
+        if (isMounted) {
+          setUpdateCheckResult(result);
+          if (result.hasUpdate && result.latestVersion) {
+            const dismissedKey = `@sambayang_update_dismissed_${result.latestVersion}`;
+            const dismissed = await AsyncStorage.getItem(dismissedKey);
+            if (dismissed !== 'true') {
+              setIsUpdateBannerVisible(true);
+            }
+          }
         }
       } catch {
-        // Fallback gracefully
+        // Fallback gracefully on network error
       }
     })();
     return () => {
@@ -386,29 +398,20 @@ export default function HomeScreen() {
 
   const handleDismissUpdate = async () => {
     try {
-      await AsyncStorage.setItem(UPDATE_BUTTON_DISMISSED_KEY, 'true');
+      if (updateCheckResult?.latestVersion) {
+        await AsyncStorage.setItem(
+          `@sambayang_update_dismissed_${updateCheckResult.latestVersion}`,
+          'true'
+        );
+      }
       setIsUpdateBannerVisible(false);
     } catch {
       setIsUpdateBannerVisible(false);
     }
   };
 
-  const handleApplyUpdate = async () => {
-    try {
-      await AsyncStorage.setItem(UPDATE_BUTTON_DISMISSED_KEY, 'true');
-      setIsUpdateBannerVisible(false);
-      const supported = await Linking.canOpenURL(GITHUB_RELEASES_URL);
-      if (supported) {
-        await Linking.openURL(GITHUB_RELEASES_URL);
-      } else {
-        Alert.alert(
-          'Latest Release',
-          `Download the latest standalone APK with background Adhan at: ${GITHUB_RELEASES_URL}`
-        );
-      }
-    } catch {
-      setIsUpdateBannerVisible(false);
-    }
+  const handleApplyUpdate = () => {
+    setIsUpdateModalVisible(true);
   };
 
   // Persistent tracking of last auto-played prayer key: "YYYY-MM-DD-PrayerName"
@@ -444,18 +447,38 @@ export default function HomeScreen() {
     return () => clearInterval(timer);
   }, []);
 
-  // Listen for notification taps to open Post-Salah Dua modal
+  // Listen for notification taps to open Post-Salah Dua modal or play interactive Adhan
   useEffect(() => {
     const sub = addNotificationResponseListener((response) => {
       const data = response?.notification?.request?.content?.data;
       if (data?.type === 'post_salah_dua') {
         setIsDuaModalVisible(true);
+      } else if (data?.type === 'adhan_prayer') {
+        const prayerName = data?.prayerName as PrayerName | undefined;
+        if (prayerName) {
+          setCurrentlyPlayingPrayer(prayerName);
+          try {
+            if (prayerName === 'Fajr') {
+              standardPlayer.pause();
+              standardPlayer.seekTo(0);
+              fajrPlayer.seekTo(0);
+              fajrPlayer.play();
+            } else {
+              fajrPlayer.pause();
+              fajrPlayer.seekTo(0);
+              standardPlayer.seekTo(0);
+              standardPlayer.play();
+            }
+          } catch (err) {
+            console.warn('[Notifications] Failed to start Adhan playback on notification response:', err);
+          }
+        }
       }
     });
     return () => {
       sub.remove();
     };
-  }, []);
+  }, [standardPlayer, fajrPlayer]);
 
   // Fetch location & reverse geocode
   const fetchLocationAndWeather = useCallback(async () => {
@@ -846,23 +869,27 @@ export default function HomeScreen() {
           start={{ x: 0, y: 0 }}
           end={{ x: 1, y: 1 }}
           style={styles.heroCard}>
-          {/* TOP HEADER ROW: Dates & Update Action */}
+          {/* TOP HEADER ROW: Dates & In-App Update Trigger */}
           <View style={styles.heroHeaderRow}>
             <View style={styles.dateBlock}>
               <Text style={styles.gregorianDateText}>{formatGregorianDate(currentTime)}</Text>
               <Text style={styles.hijriDateText}>{formatHijriDate(currentTime)}</Text>
             </View>
             <Pressable
-              onPress={handleApplyUpdate}
+              onPress={() => setIsUpdateModalVisible(true)}
               hitSlop={8}
               accessibilityRole="button"
-              accessibilityLabel="Download latest v1.0.2 APK"
+              accessibilityLabel="Check for App Updates"
               style={({ pressed }) => [
                 styles.heroUpdatePill,
-                pressed && { opacity: 0.8, transform: [{ scale: 0.96 }] },
+                pressed && { opacity: 0.75, transform: [{ scale: 0.96 }] },
               ]}>
-              <Ionicons name="cloud-download-outline" size={13} color="#FFFFFF" />
-              <Text style={styles.heroUpdatePillText}>Update v1.0.2</Text>
+              <Ionicons name="sparkles" size={13} color="#FFFFFF" />
+              <Text style={styles.heroUpdatePillText}>
+                {updateCheckResult?.hasUpdate
+                  ? `v${updateCheckResult.latestVersion} Available`
+                  : `v${currentAppVersion}`}
+              </Text>
             </Pressable>
           </View>
 
@@ -991,7 +1018,7 @@ export default function HomeScreen() {
         )}
 
         {/* PROMINENT UPDATE CARD (HIGH VISIBILITY AT TOP) */}
-        {isUpdateBannerVisible && (
+        {isUpdateBannerVisible && updateCheckResult && updateCheckResult.hasUpdate && (
           <View
             style={[
               styles.updateCard,
@@ -1008,11 +1035,13 @@ export default function HomeScreen() {
                     New Update Available
                   </Text>
                   <View style={styles.updateVersionBadge}>
-                    <Text style={styles.updateVersionBadgeText}>v1.0.2</Text>
+                    <Text style={styles.updateVersionBadgeText}>
+                      v{updateCheckResult.latestVersion}
+                    </Text>
                   </View>
                 </View>
                 <Text style={[styles.updateDescription, { color: themeSecondaryTextColor }]}>
-                  Native background Adhan audio notifications and punctual exact prayer alarms.
+                  {updateCheckResult.releaseTitle || 'A new production build is ready for installation.'}
                 </Text>
               </View>
               <Pressable
@@ -1028,7 +1057,7 @@ export default function HomeScreen() {
             <Pressable
               onPress={handleApplyUpdate}
               accessibilityRole="button"
-              accessibilityLabel="Download latest v1.0.2 APK from GitHub Releases"
+              accessibilityLabel={`Install update v${updateCheckResult.latestVersion} directly`}
               style={({ pressed }) => [
                 styles.updateActionButton,
                 pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
@@ -1039,7 +1068,9 @@ export default function HomeScreen() {
                 end={{ x: 1, y: 0 }}
                 style={styles.updateGradientButton}>
                 <Ionicons name="cloud-download-outline" size={17} color="#FFFFFF" />
-                <Text style={styles.updateButtonText}>Download v1.0.2 APK</Text>
+                <Text style={styles.updateButtonText}>
+                  Update to v{updateCheckResult.latestVersion}
+                </Text>
               </LinearGradient>
             </Pressable>
           </View>
@@ -1234,6 +1265,18 @@ export default function HomeScreen() {
         visible={isDuaModalVisible}
         onClose={() => setIsDuaModalVisible(false)}
         isDark={isDark}
+      />
+
+      {/* IN-APP UPDATER MODAL (NATIVE APK PACKAGE INSTALLER) */}
+      <InAppUpdateModal
+        visible={isUpdateModalVisible}
+        onClose={() => setIsUpdateModalVisible(false)}
+        isDark={isDark}
+        initialCheckResult={updateCheckResult}
+        onUpdateAvailable={(res) => {
+          setUpdateCheckResult(res);
+          setIsUpdateBannerVisible(true);
+        }}
       />
     </SafeAreaView>
   );

@@ -1,15 +1,41 @@
-import { Image } from 'expo-image';
-import { StyleSheet, View } from 'react-native';
-import Animated, { Keyframe, Easing } from 'react-native-reanimated';
+/**
+ * @file animated-icon.web.tsx
+ * @description Web implementation of AnimatedIcon and AnimatedSplashOverlay adhering to SOLID principles.
+ */
+
+import { Image, type ImageStyle } from 'expo-image';
+import React, { useEffect, useMemo } from 'react';
+import { StyleSheet, View, type ViewStyle } from 'react-native';
+import Animated, { Easing, Keyframe } from 'react-native-reanimated';
 
 import classes from './animated-icon.module.css';
-const DURATION = 300;
+import {
+  ANIMATED_ICON_CONFIG,
+  type AnimatedIconProps,
+  type AnimatedSplashOverlayProps,
+} from './animated-icon.types';
 
-export function AnimatedSplashOverlay() {
+// Re-export shared contracts and configuration
+export * from './animated-icon.types';
+
+/**
+ * Web implementation of the splash dismissal overlay.
+ * On web platforms, no native splash screen exists, so it immediately invokes
+ * completion callbacks and renders null.
+ */
+export function AnimatedSplashOverlay({
+  onSplashHidden,
+  onAnimationComplete,
+}: AnimatedSplashOverlayProps) {
+  useEffect(() => {
+    onSplashHidden?.();
+    onAnimationComplete?.();
+  }, [onSplashHidden, onAnimationComplete]);
+
   return null;
 }
 
-const keyframe = new Keyframe({
+const webKeyframe = new Keyframe({
   0: {
     transform: [{ scale: 0 }],
   },
@@ -23,7 +49,7 @@ const keyframe = new Keyframe({
   },
 });
 
-const logoKeyframe = new Keyframe({
+const webLogoKeyframe = new Keyframe({
   0: {
     opacity: 0,
   },
@@ -39,12 +65,12 @@ const logoKeyframe = new Keyframe({
   },
 });
 
-const glowKeyframe = new Keyframe({
+const webGlowKeyframe = new Keyframe({
   0: {
     transform: [{ rotateZ: '-180deg' }, { scale: 0.8 }],
     opacity: 0,
   },
-  [DURATION / 1000]: {
+  0.3: {
     transform: [{ rotateZ: '0deg' }, { scale: 1 }],
     opacity: 1,
     easing: Easing.elastic(0.7),
@@ -54,51 +80,90 @@ const glowKeyframe = new Keyframe({
   },
 });
 
-export function AnimatedIcon() {
+/**
+ * Web implementation of the composite AnimatedIcon component.
+ */
+export function AnimatedIcon({
+  duration = 300,
+  glowDuration = ANIMATED_ICON_CONFIG.defaultGlowDurationMs,
+  size = ANIMATED_ICON_CONFIG.defaultIconSize,
+  logoSource = require('@/assets/images/expo-logo.png'),
+  glowSource = require('@/assets/images/logo-glow.png'),
+  style,
+  testID = 'animated-icon-container',
+}: AnimatedIconProps) {
+  const scaleRatio = size / ANIMATED_ICON_CONFIG.defaultIconSize;
+
+  const containerStyle = useMemo<ViewStyle>(
+    () => ({
+      width: size,
+      height: size,
+      justifyContent: 'center',
+      alignItems: 'center',
+    }),
+    [size]
+  );
+
+  const glowStyle = useMemo<ImageStyle>(
+    () => ({
+      width: ANIMATED_ICON_CONFIG.defaultGlowSize * scaleRatio,
+      height: ANIMATED_ICON_CONFIG.defaultGlowSize * scaleRatio,
+      position: 'absolute',
+    }),
+    [scaleRatio]
+  );
+
+  const logoStyle = useMemo<ImageStyle>(
+    () => ({
+      width: ANIMATED_ICON_CONFIG.defaultLogoWidth * scaleRatio,
+      height: ANIMATED_ICON_CONFIG.defaultLogoHeight * scaleRatio,
+      position: 'absolute',
+    }),
+    [scaleRatio]
+  );
+
   return (
-    <View style={styles.iconContainer}>
-      <Animated.View entering={glowKeyframe.duration(60 * 1000 * 4)} style={styles.glow}>
-        <Image style={styles.glow} source={require('@/assets/images/logo-glow.png')} />
+    <View testID={testID} style={[containerStyle, style]}>
+      <Animated.View
+        testID={`${testID}-glow`}
+        entering={webGlowKeyframe.duration(glowDuration)}
+        style={glowStyle}>
+        <Image
+          style={glowStyle}
+          source={glowSource}
+          contentFit="contain"
+          accessibilityRole="image"
+          accessibilityLabel="Icon ambient glow"
+        />
       </Animated.View>
 
-      <Animated.View style={styles.background} entering={keyframe.duration(DURATION)}>
+      <Animated.View
+        testID={`${testID}-background`}
+        style={styles.background}
+        entering={webKeyframe.duration(duration)}>
         <div className={classes.expoLogoBackground} />
       </Animated.View>
 
-      <Animated.View style={styles.imageContainer} entering={logoKeyframe.duration(DURATION)}>
-        <Image style={styles.image} source={require('@/assets/images/expo-logo.png')} />
+      <Animated.View
+        testID={`${testID}-logo`}
+        style={styles.imageContainer}
+        entering={webLogoKeyframe.duration(duration)}>
+        <Image
+          style={logoStyle}
+          source={logoSource}
+          contentFit="contain"
+          accessibilityRole="image"
+          accessibilityLabel="Application Logo"
+        />
       </Animated.View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    alignItems: 'center',
-    width: '100%',
-    zIndex: 1000,
-    position: 'absolute',
-    top: 128 / 2 + 138,
-  },
   imageContainer: {
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  glow: {
-    width: 201,
-    height: 201,
-    position: 'absolute',
-  },
-  iconContainer: {
-    justifyContent: 'center',
-    alignItems: 'center',
-    width: 128,
-    height: 128,
-  },
-  image: {
-    position: 'absolute',
-    width: 76,
-    height: 71,
   },
   background: {
     width: 128,

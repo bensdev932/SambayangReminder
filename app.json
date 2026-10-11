@@ -27,7 +27,8 @@
         "USE_EXACT_ALARM",
         "POST_NOTIFICATIONS",
         "VIBRATE",
-        "WAKE_LOCK"
+        "WAKE_LOCK",
+        "REQUEST_INSTALL_PACKAGES"
       ]
     },
     "web": {
@@ -35,6 +36,7 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      "expo-file-system",
       "./plugins/withNotificationSounds",
       "expo-router",
       [

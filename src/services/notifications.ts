@@ -56,7 +56,7 @@ export async function setupNotificationChannel(): Promise<void> {
       vibrationPattern: [0, 500, 250, 500],
       lightColor: '#2563EB',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: true,
+      bypassDnd: false,
     });
 
     // 2. Fajr Adhan Channel (Special As-Salatu khayrun minan-nawm recitation)
@@ -68,7 +68,7 @@ export async function setupNotificationChannel(): Promise<void> {
       vibrationPattern: [0, 500, 250, 500],
       lightColor: '#10B981',
       lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      bypassDnd: true,
+      bypassDnd: false,
     });
 
     // 3. Post-Salah Du'a & Adhkar Channel
@@ -126,7 +126,9 @@ export async function schedulePrayerNotification(
   try {
     const isFajr = prayerName === 'Fajr';
     const channelId = isFajr ? NOTIFICATION_CHANNELS.FAJR_ADHAN : NOTIFICATION_CHANNELS.STANDARD_ADHAN;
-    const soundName = isFajr ? 'fajr_adhan' : 'adhan';
+    const soundName = Platform.OS === 'ios'
+      ? (isFajr ? 'fajr_adhan.mp3' : 'adhan.mp3')
+      : (isFajr ? 'fajr_adhan' : 'adhan');
 
     const body = isFajr
       ? `It is now time for Fajr prayer in ${locationName}. As-Salatu khayrun minan-nawm (Prayer is better than sleep).`
