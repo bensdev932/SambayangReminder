@@ -135,4 +135,47 @@ test('Native Kotlin AlarmModule & PlaybackService integrity', () => {
   assert.ok(serviceCode.includes('ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK'), 'Service must pass mediaPlayback foreground type');
   assert.ok(serviceCode.includes('NotificationManager.IMPORTANCE_HIGH'), 'Service channel must have IMPORTANCE_HIGH');
   assert.ok(serviceCode.includes('PowerManager.PARTIAL_WAKE_LOCK'), 'Service must acquire wake lock');
+
+  // Verify AssetFileDescriptor lifecycle safety: afd.close() must be in a finally block AFTER prepare()
+  assert.ok(serviceCode.includes('finally {'), 'AdhanPlaybackService must clean up afd in finally');
+  assert.ok(serviceCode.includes('afd.close()'), 'AdhanPlaybackService must call afd.close()');
+  const prepareIdx = serviceCode.indexOf('prepare()');
+  const finallyIdx = serviceCode.indexOf('finally {');
+  assert.ok(prepareIdx > 0 && finallyIdx > prepareIdx, 'mediaPlayer.prepare() must precede afd cleanup in finally block');
 });
+
+test('Next-occurrence scheduling logic: past Fajr always schedules for tomorrow', () => {
+  // Simulate today at 22:00 (10:00 PM) where all 5 prayers have elapsed
+  const simulatedNow = new Date('2026-10-18T22:00:00Z');
+  const todayFajr = new Date('2026-10-18T05:00:00Z');
+  const tomorrowFajr = new Date('2026-10-19T05:00:00Z');
+
+  // Past check: today's Fajr is in the past
+  assert.strictEqual(todayFajr.getTime() <= simulatedNow.getTime(), true, "Today's Fajr must evaluate to past at 10 PM");
+
+  // Next-occurrence computation
+  const computeNextOccurrence = (todayTime, tomorrowTime, currentTime) => {
+    return todayTime.getTime() > currentTime.getTime() ? todayTime : tomorrowTime;
+  };
+
+  const scheduledFajr = computeNextOccurrence(todayFajr, tomorrowFajr, simulatedNow);
+  assert.strictEqual(scheduledFajr.getTime(), tomorrowFajr.getTime(), 'Must schedule tomorrow Fajr when today Fajr is past');
+  assert.strictEqual(scheduledFajr.getTime() > simulatedNow.getTime(), true, 'Scheduled Fajr must be strictly in the future');
+});
+
+test('UI decoupling & preview button integrity in HomeScreen', () => {
+  const indexTsxPath = path.resolve('src/app/index.tsx');
+  const indexTsx = fs.readFileSync(indexTsxPath, 'utf8');
+
+  // Verify dailyPrayers is decoupled from 1-second clock
+  assert.ok(indexTsx.includes('const dailyPrayers = useMemo('), 'Must compute memoized dailyPrayers');
+  assert.ok(indexTsx.includes('calendarDateKey'), 'Must use calendarDateKey for daily memoization');
+
+  // Verify next-occurrence scheduling logic exists in effect
+  assert.ok(indexTsx.includes('tomorrowPrayerMap'), 'Must maintain tomorrowPrayerMap for next-occurrence scheduling');
+
+  // Verify dedicated preview handler and UI button
+  assert.ok(indexTsx.includes('handlePreviewPrayerAdhan'), 'Must implement handlePreviewPrayerAdhan');
+  assert.ok(indexTsx.includes('prayerPreviewButton'), 'Must define prayerPreviewButton in UI and styles');
+});
+

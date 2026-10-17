@@ -673,13 +673,25 @@ export default function HomeScreen() {
     setIsRefreshing(false);
   }, [fetchLocationAndWeather]);
 
-  // Compute 5 Fard prayer times using adhan (Muslim World League + Standard Asr)
-  const prayerData = useMemo(() => {
+  // Stable calendar date key (e.g. "2026-10-18") so prayer times do not thrash every second
+  const calendarDateKey = `${currentTime.getFullYear()}-${String(currentTime.getMonth() + 1).padStart(2, '0')}-${String(currentTime.getDate()).padStart(2, '0')}`;
+
+  // 1. Daily Prayer Times (Today & Tomorrow)
+  // Computed using Muslim World League + Shafi madhab.
+  // Memoized strictly on coordinates and calendar date key (changes at midnight), NOT on 1-second clock!
+  const dailyPrayers = useMemo(() => {
     const coordinates = new Coordinates(coords.latitude, coords.longitude);
     const params = CalculationMethod.MuslimWorldLeague();
     params.madhab = Madhab.Shafi;
 
-    const todayPrayers = new PrayerTimes(coordinates, currentTime, params);
+    // Use calendar date key at noon to guarantee stable daily calculations across DST/time boundaries
+    const [year, month, day] = calendarDateKey.split('-').map(Number);
+    const today = new Date(year, month - 1, day, 12, 0, 0);
+    const todayPrayers = new PrayerTimes(coordinates, today, params);
+
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowPrayers = new PrayerTimes(coordinates, tomorrow, params);
 
     const prayersList: PrayerItem[] = [
       {
@@ -719,29 +731,42 @@ export default function HomeScreen() {
       },
     ];
 
+    const tomorrowPrayerMap: Record<PrayerName, Date> = {
+      Fajr: tomorrowPrayers.fajr,
+      Dhuhr: tomorrowPrayers.dhuhr,
+      Asr: tomorrowPrayers.asr,
+      Maghrib: tomorrowPrayers.maghrib,
+      Isha: tomorrowPrayers.isha,
+    };
+
+    return {
+      todayPrayers,
+      tomorrowPrayers,
+      prayersList,
+      tomorrowPrayerMap,
+    };
+  }, [coords.latitude, coords.longitude, calendarDateKey]);
+
+  // 2. Dynamic live countdown & upcoming prayer cycle (updated per second with currentTime)
+  const prayerData = useMemo(() => {
+    const { prayersList, tomorrowPrayers } = dailyPrayers;
+    const nowMs = currentTime.getTime();
+
     // Determine upcoming Fard prayer
     let nextPrayerItem: PrayerItem | null = null;
     for (const item of prayersList) {
-      if (currentTime.getTime() < item.time.getTime()) {
+      if (nowMs < item.time.getTime()) {
         nextPrayerItem = item;
         break;
       }
     }
 
     // If after Isha, next prayer is Fajr tomorrow
-    let targetTime = nextPrayerItem ? nextPrayerItem.time : null;
-    let upcomingName: PrayerName = nextPrayerItem ? nextPrayerItem.id : 'Fajr';
-
-    if (!targetTime) {
-      const tomorrow = new Date(currentTime);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      const tomorrowPrayers = new PrayerTimes(coordinates, tomorrow, params);
-      targetTime = tomorrowPrayers.fajr;
-      upcomingName = 'Fajr';
-    }
+    const targetTime = nextPrayerItem ? nextPrayerItem.time : tomorrowPrayers.fajr;
+    const upcomingName: PrayerName = nextPrayerItem ? nextPrayerItem.id : 'Fajr';
 
     // Countdown calculation
-    const diffMs = Math.max(0, targetTime.getTime() - currentTime.getTime());
+    const diffMs = Math.max(0, targetTime.getTime() - nowMs);
     const totalSeconds = Math.floor(diffMs / 1000);
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
@@ -779,7 +804,7 @@ export default function HomeScreen() {
       countdownString,
       gradientColors,
     };
-  }, [coords, currentTime]);
+  }, [dailyPrayers, currentTime]);
 
   const isStandardPlaying = Boolean(standardStatus?.playing);
   const isFajrPlaying = Boolean(fajrStatus?.playing);
@@ -807,7 +832,9 @@ export default function HomeScreen() {
     return getIslamicEventInfo(new Date(todayDateString));
   }, [todayDateString]);
 
-  // Schedule native notifications when prayers or settings change
+  // Schedule native notifications & exact alarms whenever settings, location, or calendar date changes.
+  // Next-occurrence scheduling: if today's time has passed (especially Fajr), tomorrow's time is scheduled,
+  // ensuring tomorrow morning's Fajr alarm is 100% guaranteed to fire.
   useEffect(() => {
     let isCancelled = false;
     void (async () => {
@@ -828,22 +855,32 @@ export default function HomeScreen() {
         await cancelAllPrayerAlarms();
 
         const now = new Date();
-        for (const prayer of prayerData.prayersList) {
-          if (prayer.time.getTime() > now.getTime() && !isCancelled) {
-            await schedulePrayerNotification(prayer.name, prayer.time, locationName);
-            await schedulePostPrayerDuaNotification(prayer.name, prayer.time, locationName);
-            await schedulePrayerAlarm(prayer.name, prayer.time, prayer.name === 'Fajr');
+        const { prayersList, tomorrowPrayerMap } = dailyPrayers;
+
+        for (const prayer of prayersList) {
+          if (isCancelled) break;
+
+          const isFajr = prayer.id === 'Fajr';
+          // Next-occurrence: if today's prayer time has passed, schedule tomorrow's occurrence
+          const scheduledTime = prayer.time.getTime() > now.getTime()
+            ? prayer.time
+            : tomorrowPrayerMap[prayer.id];
+
+          if (scheduledTime.getTime() > now.getTime()) {
+            await schedulePrayerNotification(prayer.name, scheduledTime, locationName);
+            await schedulePostPrayerDuaNotification(prayer.name, scheduledTime, locationName);
+            await schedulePrayerAlarm(prayer.name, scheduledTime, isFajr);
           }
         }
-      } catch {
-        // Notification scheduling fallback
+      } catch (err) {
+        console.warn('[Notifications] Scheduling fallback error:', err);
       }
     })();
 
     return () => {
       isCancelled = true;
     };
-  }, [isNotificationsEnabled, prayerData.prayersList, locationName]);
+  }, [isNotificationsEnabled, locationName, dailyPrayers]);
 
   // Trigger Adhan auto-play when a Fard prayer time arrives (robust 2-minute arrival window)
   useEffect(() => {
@@ -852,7 +889,7 @@ export default function HomeScreen() {
     const now = currentTime.getTime();
     const dateKey = `${currentTime.getFullYear()}-${currentTime.getMonth() + 1}-${currentTime.getDate()}`;
 
-    for (const prayer of prayerData.prayersList) {
+    for (const prayer of dailyPrayers.prayersList) {
       const prayerTime = prayer.time.getTime();
       const elapsedSeconds = (now - prayerTime) / 1000;
       const prayerKey = `${dateKey}-${prayer.id}`;
@@ -871,13 +908,13 @@ export default function HomeScreen() {
           try {
             if (prayer.id === 'Fajr') {
               standardPlayer.pause();
-              standardPlayer.seekTo(0);
-              fajrPlayer.seekTo(0);
+              void standardPlayer.seekTo(0);
+              void fajrPlayer.seekTo(0);
               fajrPlayer.play();
             } else {
               fajrPlayer.pause();
-              fajrPlayer.seekTo(0);
-              standardPlayer.seekTo(0);
+              void fajrPlayer.seekTo(0);
+              void standardPlayer.seekTo(0);
               standardPlayer.play();
             }
           } catch (err) {
@@ -890,7 +927,7 @@ export default function HomeScreen() {
   }, [
     currentTime,
     isNotificationsEnabled,
-    prayerData.prayersList,
+    dailyPrayers.prayersList,
     standardPlayer,
     fajrPlayer,
   ]);
@@ -944,6 +981,7 @@ export default function HomeScreen() {
       if (isAudioPlaying) {
         await handleStopAdhan();
       } else {
+        void activePlayer.seekTo(0);
         activePlayer.play();
       }
     } catch {
@@ -956,12 +994,39 @@ export default function HomeScreen() {
       await stopCurrentAdhan();
       setIsNativeAdhanPlaying(false);
       fajrPlayer.pause();
-      fajrPlayer.seekTo(0);
+      void fajrPlayer.seekTo(0);
       standardPlayer.pause();
-      standardPlayer.seekTo(0);
+      void standardPlayer.seekTo(0);
       setCurrentlyPlayingPrayer(null);
     } catch {
       // Audio fallback
+    }
+  };
+
+  const handlePreviewPrayerAdhan = async (prayerId: PrayerName) => {
+    try {
+      if (currentlyPlayingPrayer === prayerId && isAudioPlaying) {
+        await handleStopAdhan();
+        return;
+      }
+
+      await stopCurrentAdhan();
+      setIsNativeAdhanPlaying(false);
+      setCurrentlyPlayingPrayer(prayerId);
+
+      if (prayerId === 'Fajr') {
+        standardPlayer.pause();
+        void standardPlayer.seekTo(0);
+        void fajrPlayer.seekTo(0);
+        fajrPlayer.play();
+      } else {
+        fajrPlayer.pause();
+        void fajrPlayer.seekTo(0);
+        void standardPlayer.seekTo(0);
+        standardPlayer.play();
+      }
+    } catch (err) {
+      console.warn(`[Adhan Preview] Failed to preview Adhan for ${prayerId}:`, err);
     }
   };
 
@@ -1371,6 +1436,7 @@ export default function HomeScreen() {
             {prayerData.prayersList.map((item, index) => {
               const isNext = item.id === prayerData.upcomingName;
               const isLast = index === prayerData.prayersList.length - 1;
+              const isPrayerAudioActive = isAudioPlaying && currentlyPlayingPrayer === item.id;
 
               return (
                 <View
@@ -1411,7 +1477,7 @@ export default function HomeScreen() {
                     </Text>
                   </View>
 
-                  {/* Right: Time & Next Indicator */}
+                  {/* Right: Time, Next Indicator & Dedicated Adhan Audio Preview Button */}
                   <View style={styles.prayerRowRight}>
                     {isNext && (
                       <View style={styles.nextBadge}>
@@ -1426,6 +1492,31 @@ export default function HomeScreen() {
                       ]}>
                       {item.formattedTime}
                     </Text>
+                    <Pressable
+                      onPress={() => void handlePreviewPrayerAdhan(item.id)}
+                      hitSlop={8}
+                      accessibilityRole="button"
+                      accessibilityLabel={
+                        isPrayerAudioActive
+                          ? `Pause ${item.name} Adhan`
+                          : `Play ${item.name} Adhan audio preview`
+                      }
+                      style={[
+                        styles.prayerPreviewButton,
+                        isPrayerAudioActive && styles.prayerPreviewButtonActive,
+                      ]}>
+                      <Ionicons
+                        name={isPrayerAudioActive ? 'pause-circle' : 'play-circle-outline'}
+                        size={22}
+                        color={
+                          isPrayerAudioActive
+                            ? '#2563EB'
+                            : isDark
+                            ? '#94A3B8'
+                            : '#64748B'
+                        }
+                      />
+                    </Pressable>
                   </View>
                 </View>
               );
@@ -1785,6 +1876,16 @@ const styles = StyleSheet.create({
   activePrayerRowTime: {
     fontSize: 16,
     fontWeight: '700',
+  },
+  prayerPreviewButton: {
+    padding: 4,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 2,
+  },
+  prayerPreviewButtonActive: {
+    backgroundColor: 'rgba(37, 99, 235, 0.15)',
   },
 
   // ISLAMIC EVENT COUNTDOWN CARD STYLES

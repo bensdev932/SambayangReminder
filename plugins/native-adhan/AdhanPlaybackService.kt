@@ -104,9 +104,21 @@ class AdhanPlaybackService : Service() {
         }
 
         // 3. Initialize MediaPlayer on the ALARM stream
-        try {
-            val audioResId = if (isFajr) R.raw.fajr_adhan else R.raw.adhan
+        val audioResId = if (isFajr) R.raw.fajr_adhan else R.raw.adhan
+        val afd = try {
+            resources.openRawResourceFd(audioResId)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to open raw resource for Adhan (resId=$audioResId): ${e.message}", e)
+            null
+        }
 
+        if (afd == null) {
+            Log.e(TAG, "AssetFileDescriptor is null for Adhan (resId=$audioResId)")
+            stopAdhanPlayback()
+            return
+        }
+
+        try {
             mediaPlayer = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -115,9 +127,7 @@ class AdhanPlaybackService : Service() {
                         .build()
                 )
 
-                val afd = resources.openRawResourceFd(audioResId)
                 setDataSource(afd.fileDescriptor, afd.startOffset, afd.length)
-                afd.close()
 
                 setOnCompletionListener {
                     Log.d(TAG, "Adhan recitation completed naturally (~2m 50s). Cleaning up.")
@@ -139,6 +149,12 @@ class AdhanPlaybackService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "Failed to start MediaPlayer for Adhan: ${e.message}", e)
             stopAdhanPlayback()
+        } finally {
+            try {
+                afd.close()
+            } catch (closeErr: Exception) {
+                Log.w(TAG, "Failed to close AssetFileDescriptor: ${closeErr.message}")
+            }
         }
     }
 
