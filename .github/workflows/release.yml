@@ -95,7 +95,7 @@ jobs:
           cache: "npm"
 
       - name: Setup Java JDK (Temurin 17)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: "temurin"
           java-version: "17"
@@ -109,21 +109,25 @@ jobs:
       - name: Ensure Gradle Wrapper Executable & Configure Network Timeout
         run: |
           chmod +x android/gradlew
-          # Increase Gradle wrapper network timeout from 10s default to 180s to prevent Read timed out exceptions
-          sed -i 's/networkTimeout=10000/networkTimeout=180000/g' android/gradle/wrapper/gradle-wrapper.properties || true
-          cat android/gradle/wrapper/gradle-wrapper.properties
+          # Increase Gradle wrapper network timeout to 180s to prevent Read timed out exceptions
+          WRAPPER_PROP="android/gradle/wrapper/gradle-wrapper.properties"
+          if grep -q "networkTimeout=" "$WRAPPER_PROP"; then
+            sed -i 's/networkTimeout=.*/networkTimeout=180000/g' "$WRAPPER_PROP"
+          else
+            echo "networkTimeout=180000" >> "$WRAPPER_PROP"
+          fi
+          cat "$WRAPPER_PROP"
 
       - name: Setup Gradle Build Tool & Distribution Cache
         uses: gradle/actions/setup-gradle@v4
         with:
-          build-root-directory: android
           cache-read-only: false
 
       - name: Build Android Release APK
         env:
-          # Extend Gradle wrapper network socket timeouts from 10s to 120s to prevent Read timed out exceptions
-          JAVA_OPTS: "-Dsun.net.client.defaultConnectTimeout=120000 -Dsun.net.client.defaultReadTimeout=120000"
-          GRADLE_OPTS: "-Dorg.gradle.internal.http.socketTimeout=120000 -Dorg.gradle.internal.http.connectionTimeout=120000 -Dorg.gradle.internal.repository.max.retries=10"
+          # Extend Gradle wrapper and socket timeouts to 180s to prevent Read timed out exceptions
+          JAVA_OPTS: "-Dgradle.wrapper.networkTimeout=180000 -Dsun.net.client.defaultConnectTimeout=180000 -Dsun.net.client.defaultReadTimeout=180000"
+          GRADLE_OPTS: "-Dorg.gradle.internal.http.socketTimeout=180000 -Dorg.gradle.internal.http.connectionTimeout=180000 -Dorg.gradle.internal.repository.max.retries=10"
         run: |
           cd android
           ./gradlew assembleRelease --no-daemon --stacktrace
