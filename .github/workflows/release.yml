@@ -106,8 +106,12 @@ jobs:
       - name: Expo Prebuild (Generate Native Android Project with Config Plugins)
         run: npx expo prebuild --clean --no-install
 
-      - name: Ensure Gradle Wrapper Executable
-        run: chmod +x android/gradlew
+      - name: Ensure Gradle Wrapper Executable & Configure Network Timeout
+        run: |
+          chmod +x android/gradlew
+          # Increase Gradle wrapper network timeout from 10s default to 180s to prevent Read timed out exceptions
+          sed -i 's/networkTimeout=10000/networkTimeout=180000/g' android/gradle/wrapper/gradle-wrapper.properties || true
+          cat android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Setup Gradle Build Tool & Distribution Cache
         uses: gradle/actions/setup-gradle@v4

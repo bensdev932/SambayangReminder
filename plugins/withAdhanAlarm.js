@@ -26,7 +26,6 @@ const withAdhanAlarm = (config) => {
       'android.permission.SCHEDULE_EXACT_ALARM',
       'android.permission.USE_EXACT_ALARM',
       'android.permission.USE_FULL_SCREEN_INTENT',
-      'android.permission.TURN_SCREEN_ON',
       'android.permission.WAKE_LOCK',
       'android.permission.FOREGROUND_SERVICE',
       'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
@@ -66,7 +65,6 @@ const withAdhanAlarm = (config) => {
           ) {
             act.$['android:showWhenLocked'] = 'true';
             act.$['android:turnScreenOn'] = 'true';
-            act.$['android:showOnLockScreen'] = 'true';
           }
         }
       }
