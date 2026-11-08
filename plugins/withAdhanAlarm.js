@@ -1,6 +1,7 @@
 const {
   withAndroidManifest,
   withMainApplication,
+  withMainActivity,
   withDangerousMod,
 } = require('@expo/config-plugins');
 const fs = require('fs');
@@ -9,10 +10,11 @@ const path = require('path');
 /**
  * Expo Config Plugin for Sambayang Reminder True Alarm Clock & Background Adhan Playback.
  * Configures:
- * 1. AndroidManifest permissions: REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, RECEIVE_BOOT_COMPLETED, etc.
- * 2. ForegroundService (mediaPlayback), AlarmReceiver, BootReceiver.
+ * 1. AndroidManifest permissions: REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, RECEIVE_BOOT_COMPLETED, USE_FULL_SCREEN_INTENT, etc.
+ * 2. ForegroundService (mediaPlayback), AlarmReceiver, BootReceiver, and MainActivity lockscreen wake attributes.
  * 3. Registers native AdhanAlarmPackage in MainApplication.kt.
- * 4. Ensures native Kotlin sources are copied into android/app/src/main/java/com/ben/adhanprayerreminder/adhan/.
+ * 4. Configures MainActivity.kt to wake screen and show over lockscreen.
+ * 5. Ensures native Kotlin sources are copied into android/app/src/main/java/com/ben/adhanprayerreminder/adhan/.
  */
 const withAdhanAlarm = (config) => {
   // 1. AndroidManifest.xml modifications
@@ -23,6 +25,8 @@ const withAdhanAlarm = (config) => {
     const requiredPermissions = [
       'android.permission.SCHEDULE_EXACT_ALARM',
       'android.permission.USE_EXACT_ALARM',
+      'android.permission.USE_FULL_SCREEN_INTENT',
+      'android.permission.TURN_SCREEN_ON',
       'android.permission.WAKE_LOCK',
       'android.permission.FOREGROUND_SERVICE',
       'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
@@ -52,6 +56,20 @@ const withAdhanAlarm = (config) => {
     if (application) {
       if (!application.service) application.service = [];
       if (!application.receiver) application.receiver = [];
+
+      // Configure MainActivity attributes to allow showing over lockscreen & waking display
+      if (application.activity) {
+        for (const act of application.activity) {
+          if (
+            act.$['android:name'] === '.MainActivity' ||
+            act.$['android:name'] === 'com.ben.adhanprayerreminder.MainActivity'
+          ) {
+            act.$['android:showWhenLocked'] = 'true';
+            act.$['android:turnScreenOn'] = 'true';
+            act.$['android:showOnLockScreen'] = 'true';
+          }
+        }
+      }
 
       // Check if AdhanPlaybackService already exists
       const hasPlaybackService = application.service.some(
@@ -132,7 +150,55 @@ const withAdhanAlarm = (config) => {
     return config;
   });
 
-  // 3. Ensure native Kotlin source files exist
+  // 3. MainActivity.kt lockscreen display and screen wake configuration
+  config = withMainActivity(config, (config) => {
+    let contents = config.modResults.contents;
+
+    const buildImport = 'import android.os.Build\nimport android.view.WindowManager';
+    if (!contents.includes('android.os.Build')) {
+      if (contents.includes('import android.os.Bundle')) {
+        contents = contents.replace(
+          'import android.os.Bundle',
+          `import android.os.Bundle\n${buildImport}`
+        );
+      } else {
+        contents = `${buildImport}\n${contents}`;
+      }
+    }
+
+    const wakeLockLogic = `
+    // Enable lockscreen display and turn screen on for Adhan prayer alarms
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+      setShowWhenLocked(true)
+      setTurnScreenOn(true)
+    } else {
+      @Suppress("DEPRECATION")
+      window.addFlags(
+        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+      )
+    }`;
+
+    if (!contents.includes('setShowWhenLocked(true)')) {
+      if (contents.includes('super.onCreate(null)')) {
+        contents = contents.replace(
+          'super.onCreate(null)',
+          `super.onCreate(null)\n${wakeLockLogic}`
+        );
+      } else if (contents.includes('super.onCreate(savedInstanceState)')) {
+        contents = contents.replace(
+          'super.onCreate(savedInstanceState)',
+          `super.onCreate(savedInstanceState)\n${wakeLockLogic}`
+        );
+      }
+    }
+
+    config.modResults.contents = contents;
+    return config;
+  });
+
+  // 4. Ensure native Kotlin source files exist
   config = withDangerousMod(config, [
     'android',
     async (config) => {

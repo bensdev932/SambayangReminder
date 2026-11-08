@@ -17,6 +17,7 @@ import {
   downloadUpdateApk,
   getCurrentAppVersion,
   installUpdateApk,
+  verifyApkIntegrity,
   type DownloadProgressInfo,
   type UpdateCheckResult,
 } from '../services/update-service';
@@ -34,6 +35,7 @@ type UpdateStatus =
   | 'checking'
   | 'available'
   | 'downloading'
+  | 'verifying'
   | 'downloaded'
   | 'installing'
   | 'up_to_date'
@@ -150,10 +152,22 @@ export function InAppUpdateModal({
         (p) => setProgress(p)
       );
 
+      // Verify SHA-256 integrity before touching the Package Installer
+      setStatus('verifying');
+      const integrity = await verifyApkIntegrity(uri, checkResult.apkAsset.sha256);
+      if (!integrity.valid) {
+        setStatus('error');
+        setErrorMessage(
+          integrity.error ||
+            'SHA-256 checksum mismatch! The downloaded binary is corrupted or was modified in transit. Installation aborted.'
+        );
+        return;
+      }
+
       setDownloadedUri(uri);
       setStatus('downloaded');
 
-      // Seamlessly invoke native package installer upon completion
+      // Seamlessly invoke native package installer upon verification
       await handleInstallNow(uri);
     } catch (err: any) {
       setStatus('error');
@@ -167,12 +181,14 @@ export function InAppUpdateModal({
   const themeBorderColor = isDark ? '#1F2937' : '#E5E7EB';
   const isExpoGo = isRunningInExpoGo();
 
+  const isBusy = status === 'downloading' || status === 'verifying';
+
   return (
     <Modal
       visible={visible}
       transparent={true}
       animationType="fade"
-      onRequestClose={status === 'downloading' ? undefined : onClose}>
+      onRequestClose={isBusy ? undefined : onClose}>
       <View style={styles.modalOverlay}>
         <View style={[styles.modalCard, { backgroundColor: themeCardBg, borderColor: themeBorderColor }]}>
           {/* Header */}
@@ -189,7 +205,7 @@ export function InAppUpdateModal({
               </View>
             </View>
 
-            {status !== 'downloading' && (
+            {!isBusy && (
               <Pressable
                 onPress={onClose}
                 hitSlop={10}
@@ -391,6 +407,15 @@ export function InAppUpdateModal({
               </View>
             )}
 
+            {status === 'verifying' && (
+              <View style={styles.downloadingPlaceholder}>
+                <ActivityIndicator size="small" color="#10B981" />
+                <Text style={[styles.downloadingText, { color: themeTextColor }]}>
+                  Verifying SHA-256 package integrity...
+                </Text>
+              </View>
+            )}
+
             {(status === 'up_to_date' || status === 'error') && (
               <Pressable
                 onPress={performCheck}
@@ -408,7 +433,7 @@ export function InAppUpdateModal({
               </Pressable>
             )}
 
-            {status !== 'downloading' && (
+            {!isBusy && (
               <Pressable
                 onPress={onClose}
                 accessibilityRole="button"

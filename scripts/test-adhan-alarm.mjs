@@ -91,12 +91,16 @@ test('SCHEDULE_EXACT_ALARM permission and receiver verification', () => {
 
     assert.ok(pluginCode.includes('android.permission.SCHEDULE_EXACT_ALARM'), 'Plugin must request SCHEDULE_EXACT_ALARM');
     assert.ok(pluginCode.includes('android.permission.USE_EXACT_ALARM'), 'Plugin must request USE_EXACT_ALARM');
+    assert.ok(pluginCode.includes('android.permission.USE_FULL_SCREEN_INTENT'), 'Plugin must request USE_FULL_SCREEN_INTENT');
     assert.ok(pluginCode.includes('android.permission.WAKE_LOCK'), 'Plugin must request WAKE_LOCK');
     assert.ok(pluginCode.includes('android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK'), 'Plugin must request FOREGROUND_SERVICE_MEDIA_PLAYBACK');
     assert.ok(
       pluginCode.includes('android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED'),
       'Plugin must register receiver for exact alarm permission changes'
     );
+    assert.ok(pluginCode.includes('android:showWhenLocked'), 'Plugin must set showWhenLocked on MainActivity');
+    assert.ok(pluginCode.includes('android:turnScreenOn'), 'Plugin must set turnScreenOn on MainActivity');
+    assert.ok(pluginCode.includes('withMainActivity'), 'Plugin must configure MainActivity');
   }
 
   // Check app.json permission declarations
@@ -106,6 +110,7 @@ test('SCHEDULE_EXACT_ALARM permission and receiver verification', () => {
 
   assert.ok(permissions.includes('SCHEDULE_EXACT_ALARM'), 'app.json must declare SCHEDULE_EXACT_ALARM');
   assert.ok(permissions.includes('USE_EXACT_ALARM'), 'app.json must declare USE_EXACT_ALARM');
+  assert.ok(permissions.includes('USE_FULL_SCREEN_INTENT'), 'app.json must declare USE_FULL_SCREEN_INTENT');
   assert.ok(permissions.includes('WAKE_LOCK'), 'app.json must declare WAKE_LOCK');
   assert.ok(permissions.includes('FOREGROUND_SERVICE'), 'app.json must declare FOREGROUND_SERVICE');
   assert.ok(permissions.includes('FOREGROUND_SERVICE_MEDIA_PLAYBACK'), 'app.json must declare FOREGROUND_SERVICE_MEDIA_PLAYBACK');
@@ -135,6 +140,13 @@ test('Native Kotlin AlarmModule & PlaybackService integrity', () => {
   assert.ok(serviceCode.includes('ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK'), 'Service must pass mediaPlayback foreground type');
   assert.ok(serviceCode.includes('NotificationManager.IMPORTANCE_HIGH'), 'Service channel must have IMPORTANCE_HIGH');
   assert.ok(serviceCode.includes('PowerManager.PARTIAL_WAKE_LOCK'), 'Service must acquire wake lock');
+  assert.ok(serviceCode.includes('setFullScreenIntent'), 'Service must configure fullScreenIntent');
+  assert.ok(serviceCode.includes('PowerManager.ACQUIRE_CAUSES_WAKEUP'), 'Service must wake display via ACQUIRE_CAUSES_WAKEUP');
+
+  // Verify receiver integrity
+  const receiverPath = path.resolve('plugins/native-adhan/AdhanAlarmReceiver.kt');
+  const receiverCode = fs.readFileSync(receiverPath, 'utf8');
+  assert.ok(receiverCode.includes('PowerManager.ACQUIRE_CAUSES_WAKEUP'), 'Receiver must wake display via ACQUIRE_CAUSES_WAKEUP');
 
   // Verify AssetFileDescriptor lifecycle safety: afd.close() must be in a finally block AFTER prepare()
   assert.ok(serviceCode.includes('finally {'), 'AdhanPlaybackService must clean up afd in finally');

@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release Tag (e.g. v1.0.3)"
+        description: "Release Tag (e.g. v1.0.6)"
         required: true
-        default: "v1.0.3"
+        default: "v1.0.6"
       release_name:
         description: "Release Title"
         required: false
@@ -31,8 +31,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # ==========================================================================================
+  # JOB 1: STRICT FAIL-CLOSED QUALITY GATE
+  # Enforces Principle I & II of universal-release-and-ci-guard:
+  # Any manifest desync, test failure, type error, or lint error immediately halts the pipeline.
+  # ==========================================================================================
+  quality-gate:
+    name: Quality Verification Gate & Manifest Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js Runtime
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install Node Dependencies
+        run: npm ci
+
+      - name: Verify Manifest Synchronization (package.json, app.json, version.json)
+        run: node scripts/verify-manifest-sync.mjs
+
+      - name: Run Test Suite
+        run: npm test
+
+      - name: TypeScript Static Analysis & Typecheck
+        run: npx tsc --noEmit
+
+      - name: ESLint Code Quality Verification
+        run: npx eslint .
+
+  # ==========================================================================================
+  # JOB 2: ANDROID RELEASE APK COMPILATION & CANONICAL DISTRIBUTION
+  # Strictly depends on Job 1 (quality-gate). Will never execute if any quality check fails.
+  # ==========================================================================================
   build-and-release:
     name: Build & Publish Release APK
+    needs: [quality-gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -61,11 +101,6 @@ jobs:
       - name: Install Node Dependencies
         run: npm ci
 
-      - name: Typecheck & Run Unit Tests
-        run: |
-          npm test
-          npx tsc --noEmit
-
       - name: Expo Prebuild (Generate Native Android Project with Config Plugins)
         run: npx expo prebuild --clean --no-install
 
@@ -77,21 +112,23 @@ jobs:
           cd android
           ./gradlew assembleRelease --no-daemon
 
-      - name: Prepare Release Assets & Checksums
+      - name: Prepare Release Assets & Compute SHA-256 Checksums
         id: prepare_assets
         run: |
           mkdir -p release-artifacts
           TAG="${{ github.event.inputs.tag_name || github.ref_name }}"
+          CLEAN_VER="${TAG#v}"
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "version=${CLEAN_VER}" >> $GITHUB_OUTPUT
 
-          # Find output APK
+          # Locate generated APK
           APK_PATH=$(find android/app/build/outputs/apk/release/ -name "*.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
             APK_PATH=$(find android/app/build/outputs/apk/ -name "*.apk" | head -n 1)
           fi
 
           if [ -z "$APK_PATH" ]; then
-            echo "Error: No APK file generated!"
+            echo "❌ Fatal: No APK binary generated!"
             exit 1
           fi
 
@@ -99,14 +136,35 @@ jobs:
           cp "$APK_PATH" "release-artifacts/SambayangReminder-${TAG}.apk"
           cp "$APK_PATH" "release-artifacts/SambayangReminder.apk"
 
-          # Generate SHA-256 Checksums
+          # Compute cryptographic SHA-256 checksums
           cd release-artifacts
           sha256sum SambayangReminder-${TAG}.apk > checksums.txt
           sha256sum SambayangReminder.apk >> checksums.txt
           cat checksums.txt
+          
+          # Extract authoritative SHA-256 hash for SambayangReminder.apk
+          APK_SHA256=$(sha256sum SambayangReminder.apk | awk '{print $1}')
+          echo "apk_sha256=${APK_SHA256}" >> $GITHUB_OUTPUT
           cd ..
 
-      - name: Upload Build Artifacts to Workflow
+      - name: Deterministically Update version.json with Binary SHA-256
+        id: update_version_json
+        run: |
+          node -e '
+            const fs = require("fs");
+            const vPath = "version.json";
+            const vData = JSON.parse(fs.readFileSync(vPath, "utf8"));
+            vData.version = "${{ steps.prepare_assets.outputs.version }}";
+            vData.sha256 = "${{ steps.prepare_assets.outputs.apk_sha256 }}";
+            vData.downloadUrl = "https://github.com/${{ github.repository }}/releases/download/${{ steps.prepare_assets.outputs.tag }}/SambayangReminder.apk";
+            vData.publishedAt = new Date().toISOString();
+            fs.writeFileSync(vPath, JSON.stringify(vData, null, 2) + "\n", "utf8");
+            console.log("Updated version.json with authoritative SHA-256 and release metadata:");
+            console.log(JSON.stringify(vData, null, 2));
+          '
+          cp version.json release-artifacts/version.json
+
+      - name: Upload Build Artifacts to Workflow Run
         uses: actions/upload-artifact@v4
         with:
           name: SambayangReminder-Release-APK
@@ -124,20 +182,22 @@ jobs:
             Official production release with in-app native updater engine, punctual exact alarms, and background Adhan recitation audio.
 
             #### ✨ Highlights:
-            - **Seamless In-App Updates**: Updates download directly in-app with download progress and launch the native Android Package Installer without external browser redirection.
-            - **Background Adhan Notifications**: Punctual high-priority prayer reminders bundling `adhan.mp3` and `fajr_adhan.mp3`.
+            - **Cryptographic SHA-256 In-App Updates**: Updates download directly in-app, verify HTTP 200 and binary SHA-256 hash integrity, and launch the native Android Package Installer without external browser redirection.
+            - **Background Adhan Notifications & Lockscreen Wake**: Punctual high-priority prayer reminders waking display from sleep (`AlarmManager.setAlarmClock()`, `USE_FULL_SCREEN_INTENT`, `PARTIAL_WAKE_LOCK`).
             - **Exact Alarms**: Precision-timed salah notifications utilizing Android's `SCHEDULE_EXACT_ALARM`.
             - **Post-Salah Du'a & Adhkar**: Built-in authentic supplications, tasbih counters, and translations.
 
             #### 📲 Installation Options:
-            1. **In-App Updater (Existing Users)**: Open Sambayang Reminder and tap **Update Now** when prompted. The new binary installs directly.
+            1. **In-App Updater (Existing Users)**: Open Sambayang Reminder and tap **Update Now** when prompted. The binary is validated and installed seamlessly.
             2. **Fresh Installation**: Download `SambayangReminder.apk` below, tap the file, and choose **Install** (enable *Install unknown apps* for your browser or file manager if prompted).
 
-            #### 🔒 Integrity Verification:
-            See attached `checksums.txt` for SHA-256 cryptographic hashes.
+            #### 🔒 Cryptographic Integrity:
+            - **SHA-256 Hash**: `${{ steps.prepare_assets.outputs.apk_sha256 }}`
+            - See attached `checksums.txt` and `version.json` for full machine-readable verification manifests.
           files: |
             release-artifacts/*.apk
             release-artifacts/checksums.txt
+            release-artifacts/version.json
           draft: ${{ github.event.inputs.draft == true }}
           prerelease: ${{ github.event.inputs.prerelease == true }}
           generate_release_notes: true

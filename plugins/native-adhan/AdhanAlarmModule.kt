@@ -346,6 +346,35 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
         }
     }
 
+    /**
+     * Computes the cryptographic SHA-256 checksum of a local file using native Java streams.
+     * Guarantees zero-copy memory safety for large binary APK updates.
+     */
+    @ReactMethod
+    fun getFileSha256(filePathString: String, promise: Promise) {
+        try {
+            val cleanPath = filePathString.removePrefix("file://")
+            val file = java.io.File(cleanPath)
+            if (!file.exists()) {
+                promise.reject("FILE_NOT_FOUND", "File does not exist at $cleanPath")
+                return
+            }
+
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+            java.io.FileInputStream(file).use { fis ->
+                val buffer = ByteArray(16384)
+                var bytesRead: Int
+                while (fis.read(buffer).also { bytesRead = it } != -1) {
+                    digest.update(buffer, 0, bytesRead)
+                }
+            }
+            val hexString = digest.digest().joinToString("") { "%02x".format(it) }
+            promise.resolve(hexString)
+        } catch (e: Exception) {
+            promise.reject("HASH_ERROR", e.message, e)
+        }
+    }
+
     private fun persistSchedule(prayerName: String, timestampMs: Long, isFajr: Boolean) {
         val prefs = reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val jsonString = prefs.getString(PREF_KEY_SCHEDULES, "[]")

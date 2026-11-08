@@ -24,7 +24,7 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
 
         Log.d(TAG, "Adhan alarm triggered for $prayerName (isFajr=$isFajr). Starting playback service.")
 
-        // Acquire a temporary wake lock to ensure CPU remains active during service startup
+        // Acquire a temporary wake lock to ensure CPU remains active and screen wakes up during service startup
         try {
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
             powerManager?.newWakeLock(
@@ -32,6 +32,16 @@ class AdhanAlarmReceiver : BroadcastReceiver() {
                 WAKE_LOCK_TAG
             )?.apply {
                 acquire(30 * 1000L) // 30 seconds max timeout
+            }
+
+            @Suppress("DEPRECATION")
+            powerManager?.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                PowerManager.ON_AFTER_RELEASE,
+                "$WAKE_LOCK_TAG:Screen"
+            )?.apply {
+                acquire(15 * 1000L) // 15 seconds screen wake
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to acquire receiver wake lock: ${e.message}")

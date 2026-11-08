@@ -1,3 +1,4 @@
+/* global __dirname */
 /**
  * Automatic patch for expo-notifications to ensure compatibility with Expo Go on Android (SDK 53+).
  * 

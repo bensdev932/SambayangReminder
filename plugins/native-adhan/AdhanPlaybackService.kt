@@ -78,7 +78,7 @@ class AdhanPlaybackService : Service() {
         currentPrayerName = prayerName
         isPlaying = true
 
-        // 1. Acquire WakeLock to keep CPU active while screen is off
+        // 1. Acquire WakeLock to keep CPU active while screen is off, plus turn screen on
         try {
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = powerManager.newWakeLock(
@@ -86,6 +86,17 @@ class AdhanPlaybackService : Service() {
                 "SambayangReminder:AdhanWakeLock"
             ).apply {
                 acquire(5 * 60 * 1000L) // 5 minutes max timeout
+            }
+
+            // Briefly wake the display if the device is currently asleep
+            @Suppress("DEPRECATION")
+            powerManager.newWakeLock(
+                PowerManager.SCREEN_BRIGHT_WAKE_LOCK or
+                PowerManager.ACQUIRE_CAUSES_WAKEUP or
+                PowerManager.ON_AFTER_RELEASE,
+                "SambayangReminder:AdhanScreenWakeLock"
+            ).apply {
+                acquire(15 * 1000L) // 15 seconds screen illumination
             }
         } catch (e: Exception) {
             Log.w(TAG, "Failed to acquire wake lock: ${e.message}")
@@ -160,13 +171,21 @@ class AdhanPlaybackService : Service() {
 
     private fun buildAlarmNotification(prayerName: String): Notification {
         val launchIntent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("openedFromAdhan", true)
             putExtra("prayerName", prayerName)
         }
         val contentPendingIntent = PendingIntent.getActivity(
             this,
             0,
+            launchIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        // Full-screen intent to wake the screen and display the alarm UI when locked
+        val fullScreenPendingIntent = PendingIntent.getActivity(
+            this,
+            2,
             launchIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
@@ -189,6 +208,7 @@ class AdhanPlaybackService : Service() {
             .setContentText("Hayya 'ala-s-Salah. Tap to open app.")
             .setSmallIcon(iconRes)
             .setContentIntent(contentPendingIntent)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
             .setOngoing(true)
             .setAutoCancel(false)
             .setPriority(NotificationCompat.PRIORITY_MAX)
