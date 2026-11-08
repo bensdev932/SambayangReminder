@@ -156,10 +156,10 @@ const withAdhanAlarm = (config) => {
       if (contents.includes('import android.os.Bundle')) {
         contents = contents.replace(
           'import android.os.Bundle',
-          'import android.os.Bundle\nimport android.os.Build\nimport android.view.WindowManager'
+          'import android.os.Bundle\nimport android.view.WindowManager'
         );
       } else {
-        contents = `import android.os.Build\nimport android.view.WindowManager\n${contents}`;
+        contents = `import android.view.WindowManager\n${contents}`;
       }
     }
 
