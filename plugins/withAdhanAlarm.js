@@ -152,29 +152,28 @@ const withAdhanAlarm = (config) => {
   config = withMainActivity(config, (config) => {
     let contents = config.modResults.contents;
 
-    const buildImport = 'import android.os.Build\nimport android.view.WindowManager';
-    if (!contents.includes('android.os.Build')) {
+    if (!contents.includes('import android.view.WindowManager')) {
       if (contents.includes('import android.os.Bundle')) {
         contents = contents.replace(
           'import android.os.Bundle',
-          `import android.os.Bundle\n${buildImport}`
+          'import android.os.Bundle\nimport android.os.Build\nimport android.view.WindowManager'
         );
       } else {
-        contents = `${buildImport}\n${contents}`;
+        contents = `import android.os.Build\nimport android.view.WindowManager\n${contents}`;
       }
     }
 
     const wakeLockLogic = `
     // Enable lockscreen display and turn screen on for Adhan prayer alarms
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O_MR1) {
       setShowWhenLocked(true)
       setTurnScreenOn(true)
     } else {
       @Suppress("DEPRECATION")
       window.addFlags(
-        WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
-        WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
-        WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+        android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+        android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
       )
     }`;
 
