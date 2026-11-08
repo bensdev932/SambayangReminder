@@ -1,0 +1,10 @@
+{
+  "version": "1.0.7",
+  "versionCode": 8,
+  "minSupportedVersion": "1.0.0",
+  "apkFileName": "SambayangReminder.apk",
+  "downloadUrl": "https://github.com/bensdev932/SambayangReminder/releases/download/v1.0.7/SambayangReminder.apk",
+  "sha256": "",
+  "releaseNotes": "Official production release with in-app native updater engine, punctual exact alarms, and background Adhan recitation audio.",
+  "publishedAt": "2026-11-08T18:00:00Z"
+}
