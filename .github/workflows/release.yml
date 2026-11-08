@@ -8,9 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       tag_name:
-        description: "Release Tag (e.g. v1.0.6)"
+        description: "Release Tag (e.g. v1.0.7)"
         required: true
-        default: "v1.0.6"
+        default: "v1.0.7"
       release_name:
         description: "Release Title"
         required: false
@@ -30,6 +30,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   # ==========================================================================================
   # JOB 1: STRICT FAIL-CLOSED QUALITY GATE
@@ -39,6 +42,7 @@ jobs:
   quality-gate:
     name: Quality Verification Gate & Manifest Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
@@ -74,6 +78,7 @@ jobs:
     name: Build & Publish Release APK
     needs: [quality-gate]
     runs-on: ubuntu-latest
+    timeout-minutes: 35
     permissions:
       contents: write
 
@@ -95,9 +100,6 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-
       - name: Install Node Dependencies
         run: npm ci
 
@@ -107,10 +109,20 @@ jobs:
       - name: Ensure Gradle Wrapper Executable
         run: chmod +x android/gradlew
 
+      - name: Setup Gradle Build Tool & Distribution Cache
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          build-root-directory: android
+          cache-read-only: false
+
       - name: Build Android Release APK
+        env:
+          # Extend Gradle wrapper network socket timeouts from 10s to 120s to prevent Read timed out exceptions
+          JAVA_OPTS: "-Dsun.net.client.defaultConnectTimeout=120000 -Dsun.net.client.defaultReadTimeout=120000"
+          GRADLE_OPTS: "-Dorg.gradle.internal.http.socketTimeout=120000 -Dorg.gradle.internal.http.connectionTimeout=120000 -Dorg.gradle.internal.repository.max.retries=10"
         run: |
           cd android
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease --no-daemon --stacktrace
 
       - name: Prepare Release Assets & Compute SHA-256 Checksums
         id: prepare_assets
@@ -170,6 +182,16 @@ jobs:
           name: SambayangReminder-Release-APK
           path: release-artifacts/*
           retention-days: 30
+
+      - name: Upload Diagnostic Logs on Failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-failure-logs
+          path: |
+            android/app/build/reports/
+            android/app/build/outputs/logs/
+          retention-days: 7
 
       - name: Publish or Draft GitHub Release
         uses: softprops/action-gh-release@v2
