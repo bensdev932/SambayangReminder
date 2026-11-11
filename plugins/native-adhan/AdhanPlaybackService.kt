@@ -71,12 +71,13 @@ class AdhanPlaybackService : Service() {
 
         val prayerName = intent?.getStringExtra(EXTRA_PRAYER_NAME) ?: "Prayer"
         val isFajr = intent?.getBooleanExtra(EXTRA_IS_FAJR, false) ?: false
+        val isTest = intent?.getBooleanExtra(EXTRA_IS_TEST, false) ?: false
 
-        startAdhanPlayback(prayerName, isFajr)
+        startAdhanPlayback(prayerName, isFajr, isTest)
         return START_NOT_STICKY
     }
 
-    private fun startAdhanPlayback(prayerName: String, isFajr: Boolean) {
+    private fun startAdhanPlayback(prayerName: String, isFajr: Boolean, isTest: Boolean = false) {
         // If already playing, stop previous instance
         stopMediaPlayer()
 
@@ -108,7 +109,6 @@ class AdhanPlaybackService : Service() {
         }
 
         // 2. Build ongoing notification with Stop action and guard startForeground on Android 14/15+
-        val isTest = intent?.getBooleanExtra(EXTRA_IS_TEST, false) ?: false
         val notification = buildAlarmNotification(prayerName, isFajr, isTest)
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -123,8 +123,11 @@ class AdhanPlaybackService : Service() {
         } catch (e: Exception) {
             Log.e(TAG, "startForeground failed (${e.javaClass.simpleName}): ${e.message}", e)
             AdhanNotificationHelper.postFallbackPrayerNotification(this, prayerName, isFajr, isTest)
+            isPlaying = false
+            currentPrayerName = null
+            releaseWakeLock()
             stopSelf()
-            return START_NOT_STICKY
+            return
         }
 
         // 3. Initialize MediaPlayer on the ALARM stream
@@ -361,7 +364,6 @@ class AdhanPlaybackService : Service() {
                 lightColor = android.graphics.Color.BLUE
             }
 
-            val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
         }
     }
@@ -369,6 +371,7 @@ class AdhanPlaybackService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopMediaPlayer()
+        abandonAlarmAudioFocus()
         releaseWakeLock()
         isPlaying = false
         currentPrayerName = null
