@@ -1,10 +1,10 @@
 {
-  "version": "1.0.7",
-  "versionCode": 8,
+  "version": "1.0.8",
+  "versionCode": 9,
   "minSupportedVersion": "1.0.0",
   "apkFileName": "SambayangReminder.apk",
-  "downloadUrl": "https://github.com/bensdev932/SambayangReminder/releases/download/v1.0.7/SambayangReminder.apk",
+  "downloadUrl": "https://github.com/bensdev932/SambayangReminder/releases/download/v1.0.8/SambayangReminder.apk",
   "sha256": "e219b33d95c02c47b7c90ce959653a11dc00b28c2b5bac621c9c61b4ca68edea",
-  "releaseNotes": "Official production release with in-app native updater engine, punctual exact alarms, and background Adhan recitation audio.",
+  "releaseNotes": "Android 15 and universal OEM Adhan alarm reliability upgrade: monochrome notification icons, bumped v2 alarm channels, automatic fallback notification on foreground service blocks, Android 14/15 full-screen lockscreen alerts, OEM background/autostart settings hub, 7-day rolling multi-day alarm queue, and 5-second native alarm tester.",
   "publishedAt": "2026-11-08T13:00:05Z"
 }

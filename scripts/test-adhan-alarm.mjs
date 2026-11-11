@@ -191,3 +191,92 @@ test('UI decoupling & preview button integrity in HomeScreen', () => {
   assert.ok(indexTsx.includes('prayerPreviewButton'), 'Must define prayerPreviewButton in UI and styles');
 });
 
+
+const { test: android15Test } = await import('node:test');
+const { default: android15Assert } = await import('node:assert/strict');
+const { readFileSync: readProjectFile } = await import('node:fs');
+const { join: joinProjectPath } = await import('node:path');
+
+android15Test('Android 15 monochrome notification icon & bumped v2 channels', () => {
+  const root = process.cwd();
+  const appJson = JSON.parse(readProjectFile(joinProjectPath(root, 'app.json'), 'utf8'));
+  const notifPlugin = appJson.expo.plugins.find(
+    (entry) => Array.isArray(entry) && entry[0] === 'expo-notifications'
+  );
+  android15Assert.ok(notifPlugin, 'expo-notifications plugin config must exist in app.json');
+  android15Assert.equal(
+    notifPlugin[1].icon,
+    './assets/images/android-icon-monochrome.png',
+    'expo-notifications icon must point to transparent monochrome asset'
+  );
+
+  const notificationsTs = readProjectFile(joinProjectPath(root, 'src/services/notifications.ts'), 'utf8');
+  android15Assert.match(notificationsTs, /adhan-prayer-channel-v2/);
+  android15Assert.match(notificationsTs, /adhan-fajr-channel-v2/);
+  android15Assert.match(notificationsTs, /post-salah-channel-v2/);
+  android15Assert.match(notificationsTs, /export async function getNotificationPermissionGranted/);
+});
+
+android15Test('Native Kotlin service, receiver fallback, FSI & OEM reliability safeguards', () => {
+  const root = process.cwd();
+  const serviceKt = readProjectFile(
+    joinProjectPath(root, 'plugins/native-adhan/AdhanPlaybackService.kt'),
+    'utf8'
+  );
+  android15Assert.match(serviceKt, /adhan_alarm_playback_channel_v2/);
+  android15Assert.match(serviceKt, /AdhanNotificationHelper\.resolveSmallIcon/);
+  android15Assert.doesNotMatch(serviceKt, /applicationInfo\.icon/);
+  android15Assert.match(serviceKt, /requestAlarmAudioFocus/);
+  android15Assert.match(serviceKt, /postFallbackPrayerNotification/);
+
+  const receiverKt = readProjectFile(
+    joinProjectPath(root, 'plugins/native-adhan/AdhanAlarmReceiver.kt'),
+    'utf8'
+  );
+  android15Assert.match(receiverKt, /internal object AdhanNotificationHelper/);
+  android15Assert.match(receiverKt, /adhan-prayer-channel-v2/);
+  android15Assert.match(receiverKt, /adhan-fajr-channel-v2/);
+  android15Assert.match(receiverKt, /AdhanAlarmModule\.scheduleNextQueuedAlarm/);
+  android15Assert.match(receiverKt, /postFallbackPrayerNotification/);
+
+  const moduleKt = readProjectFile(
+    joinProjectPath(root, 'plugins/native-adhan/AdhanAlarmModule.kt'),
+    'utf8'
+  );
+  for (const methodName of [
+    'schedulePrayerAlarmsBatch',
+    'scheduleNextQueuedAlarm',
+    'scheduleTestAlarm',
+    'areNotificationsEnabled',
+    'canUseFullScreenIntent',
+    'requestFullScreenIntentPermission',
+    'openNotificationSettings',
+    'getOemPowerManagerInfo',
+    'openOemBackgroundSettings',
+  ]) {
+    android15Assert.ok(
+      moduleKt.includes(methodName),
+      `AdhanAlarmModule.kt must implement ${methodName}`
+    );
+  }
+
+  const bootKt = readProjectFile(
+    joinProjectPath(root, 'plugins/native-adhan/AdhanBootReceiver.kt'),
+    'utf8'
+  );
+  android15Assert.match(bootKt, /ACTION_MY_PACKAGE_REPLACED/);
+
+  const pluginJs = readProjectFile(joinProjectPath(root, 'plugins/withAdhanAlarm.js'), 'utf8');
+  android15Assert.match(pluginJs, /MY_PACKAGE_REPLACED/);
+});
+
+android15Test('HomeScreen sequential permission flow, rolling multi-day alarms & Android reliability hub', () => {
+  const root = process.cwd();
+  const indexTsx = readProjectFile(joinProjectPath(root, 'src/app/index.tsx'), 'utf8');
+  android15Assert.match(indexTsx, /isLocationResolved/);
+  android15Assert.match(indexTsx, /buildRollingPrayerAlarms/);
+  android15Assert.match(indexTsx, /schedulePrayerAlarmsBatch/);
+  android15Assert.match(indexTsx, /getAndroidReliabilityStatus/);
+  android15Assert.match(indexTsx, /scheduleTestAlarm/);
+  android15Assert.match(indexTsx, /if \(!nativeAvailable\)/);
+});

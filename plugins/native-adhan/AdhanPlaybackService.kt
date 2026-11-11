@@ -9,6 +9,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.IBinder
@@ -27,8 +29,10 @@ class AdhanPlaybackService : Service() {
 
     companion object {
         private const val TAG = "AdhanPlaybackService"
-        const val CHANNEL_ID = "adhan_alarm_playback_channel"
+        const val CHANNEL_ID = "adhan_alarm_playback_channel_v2"
+        const val LEGACY_CHANNEL_ID = "adhan_alarm_playback_channel"
         const val NOTIFICATION_ID = 1001
+        const val EXTRA_IS_TEST = "is_test"
 
         const val ACTION_START = "com.ben.adhanprayerreminder.adhan.ACTION_START"
         const val ACTION_STOP = "com.ben.adhanprayerreminder.adhan.ACTION_STOP"
@@ -46,6 +50,7 @@ class AdhanPlaybackService : Service() {
     }
 
     private var mediaPlayer: MediaPlayer? = null
+    private var audioFocusRequest: AudioFocusRequest? = null
     private var wakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -102,16 +107,24 @@ class AdhanPlaybackService : Service() {
             Log.w(TAG, "Failed to acquire wake lock: ${e.message}")
         }
 
-        // 2. Build ongoing notification with Stop action
-        val notification = buildAlarmNotification(prayerName)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
-            )
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        // 2. Build ongoing notification with Stop action and guard startForeground on Android 14/15+
+        val isTest = intent?.getBooleanExtra(EXTRA_IS_TEST, false) ?: false
+        val notification = buildAlarmNotification(prayerName, isFajr, isTest)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "startForeground failed (${e.javaClass.simpleName}): ${e.message}", e)
+            AdhanNotificationHelper.postFallbackPrayerNotification(this, prayerName, isFajr, isTest)
+            stopSelf()
+            return START_NOT_STICKY
         }
 
         // 3. Initialize MediaPlayer on the ALARM stream
@@ -130,6 +143,7 @@ class AdhanPlaybackService : Service() {
         }
 
         try {
+            requestAlarmAudioFocus()
             mediaPlayer = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -169,7 +183,11 @@ class AdhanPlaybackService : Service() {
         }
     }
 
-    private fun buildAlarmNotification(prayerName: String): Notification {
+    private fun buildAlarmNotification(
+        prayerName: String,
+        isFajr: Boolean = false,
+        isTest: Boolean = false
+    ): Notification {
         val launchIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("openedFromAdhan", true)
@@ -200,15 +218,23 @@ class AdhanPlaybackService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val iconRes = applicationInfo.icon.takeIf { it != 0 }
-            ?: android.R.drawable.ic_lock_idle_alarm
+        val iconRes = AdhanNotificationHelper.resolveSmallIcon(this)
+        val contentTitle = if (isTest) {
+            "🔔 Test Adhan Alert ($prayerName)"
+        } else {
+            "🕌 Time for $prayerName Prayer"
+        }
+        val contentText = if (isFajr) {
+            "As-Salatu khayrun minan-nawm. Tap to open app."
+        } else {
+            "Hayya 'ala-s-Salah. Tap to open app."
+        }
 
-        return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("🕌 Time for $prayerName Prayer")
-            .setContentText("Hayya 'ala-s-Salah. Tap to open app.")
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(contentTitle)
+            .setContentText(contentText)
             .setSmallIcon(iconRes)
             .setContentIntent(contentPendingIntent)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
             .setOngoing(true)
             .setAutoCancel(false)
             .setPriority(NotificationCompat.PRIORITY_MAX)
@@ -219,11 +245,62 @@ class AdhanPlaybackService : Service() {
                 "🛑 Stop Adhan",
                 stopPendingIntent
             )
-            .build()
+
+        if (AdhanNotificationHelper.canUseFullScreenIntentCompat(this)) {
+            builder.setFullScreenIntent(fullScreenPendingIntent, true)
+        }
+
+        return builder.build()
+    }
+
+    private fun requestAlarmAudioFocus() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            val alarmAttributes = AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_ALARM)
+                .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                .build()
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+                    .setAudioAttributes(alarmAttributes)
+                    .setWillPauseWhenDucked(false)
+                    .build()
+                audioFocusRequest = request
+                audioManager.requestAudioFocus(request)
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.requestAudioFocus(
+                    null,
+                    AudioManager.STREAM_ALARM,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed requesting alarm audio focus: ${e.message}")
+        }
+    }
+
+    private fun abandonAlarmAudioFocus() {
+        try {
+            val audioManager = getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                audioFocusRequest?.let { req ->
+                    audioManager.abandonAudioFocusRequest(req)
+                }
+                audioFocusRequest = null
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.abandonAudioFocus(null)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed abandoning alarm audio focus: ${e.message}")
+        }
     }
 
     private fun stopAdhanPlayback() {
         stopMediaPlayer()
+        abandonAlarmAudioFocus()
         releaseWakeLock()
 
         isPlaying = false
@@ -266,6 +343,8 @@ class AdhanPlaybackService : Service() {
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.deleteNotificationChannel(LEGACY_CHANNEL_ID)
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "Adhan Prayer Alarms",

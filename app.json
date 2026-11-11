@@ -2,7 +2,7 @@
   "expo": {
     "name": "Adhan & Prayer Reminder",
     "slug": "SambayangReminder",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "adhanprayerreminder",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.ben.adhanprayerreminder",
-      "versionCode": 8,
+      "versionCode": 9,
       "adaptiveIcon": {
         "backgroundColor": "#0B132B",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -64,7 +64,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/images/icon.png",
+          "icon": "./assets/images/android-icon-monochrome.png",
           "color": "#2563EB",
           "sounds": [
             "./assets/audio/adhan.mp3",

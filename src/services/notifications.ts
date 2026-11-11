@@ -3,10 +3,17 @@ import { isRunningInExpoGo } from 'expo';
 import * as Notifications from 'expo-notifications';
 
 export const NOTIFICATION_CHANNELS = {
-  STANDARD_ADHAN: 'adhan-prayer-channel',
-  FAJR_ADHAN: 'adhan-fajr-channel',
-  POST_SALAH: 'post-salah-channel',
+  STANDARD_ADHAN: 'adhan-prayer-channel-v2',
+  FAJR_ADHAN: 'adhan-fajr-channel-v2',
+  POST_SALAH: 'post-salah-channel-v2',
 } as const;
+
+const LEGACY_NOTIFICATION_CHANNELS = [
+  'adhan-prayer-channel',
+  'adhan-fajr-channel',
+  'post-salah-channel',
+  'adhan_alarm_playback_channel',
+] as const;
 
 let isHandlerConfigured = false;
 
@@ -47,6 +54,11 @@ export async function setupNotificationChannel(): Promise<void> {
   }
 
   try {
+    // Clean up legacy v1 channels so Android 8-15 OS settings show fresh sound/DND attributes
+    for (const legacyId of LEGACY_NOTIFICATION_CHANNELS) {
+      await Notifications.deleteNotificationChannelAsync(legacyId).catch(() => {});
+    }
+
     // 1. Standard Adhan Channel (Dhuhr, Asr, Maghrib, Isha)
     await Notifications.setNotificationChannelAsync(NOTIFICATION_CHANNELS.STANDARD_ADHAN, {
       name: 'Adhan Prayer Reminders',
@@ -108,6 +120,17 @@ export async function setupNotificationChannel(): Promise<void> {
 /**
  * Request notification permissions from device.
  */
+export async function getNotificationPermissionGranted(): Promise<boolean> {
+  if (Platform.OS === 'android' && isRunningInExpoGo()) return true;
+  try {
+    const { status } = await Notifications.getPermissionsAsync();
+    return status === 'granted';
+  } catch (error) {
+    console.warn('[Notifications] Permission check error:', error);
+    return false;
+  }
+}
+
 export async function requestNotificationPermissions(): Promise<boolean> {
   if (Platform.OS === 'android' && isRunningInExpoGo()) return true;
   try {

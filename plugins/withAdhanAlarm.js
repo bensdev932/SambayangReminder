@@ -100,6 +100,8 @@ const withAdhanAlarm = (config) => {
       const bootActions = [
         { $: { 'android:name': 'android.intent.action.BOOT_COMPLETED' } },
         { $: { 'android:name': 'android.intent.action.QUICKBOOT_POWERON' } },
+        { $: { 'android:name': 'com.htc.intent.action.QUICKBOOT_POWERON' } },
+        { $: { 'android:name': 'android.intent.action.MY_PACKAGE_REPLACED' } },
         { $: { 'android:name': 'android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED' } },
         { $: { 'android:name': 'android.intent.action.TIME_SET' } },
         { $: { 'android:name': 'android.intent.action.TIMEZONE_CHANGED' } },

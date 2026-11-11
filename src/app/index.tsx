@@ -29,6 +29,7 @@ import {
 import {
   initNotificationHandler,
   setupNotificationChannel,
+  getNotificationPermissionGranted,
   requestNotificationPermissions,
   cancelAllPrayerNotifications,
   schedulePrayerNotification,
@@ -36,21 +37,88 @@ import {
   addNotificationResponseListener,
 } from '../services/notifications';
 import {
+  isNativeAlarmAvailable,
   schedulePrayerAlarm,
+  schedulePrayerAlarmsBatch,
+  scheduleTestAlarm,
   cancelAllPrayerAlarms,
   getAdhanPlaybackStatus,
   stopCurrentAdhan,
-  isBatteryOptimizationIgnored,
   requestIgnoreBatteryOptimizations,
-  canScheduleExactAlarms,
   requestScheduleExactAlarmPermission,
+  requestFullScreenIntentPermission,
+  openNotificationSettings,
+  openOemBackgroundSettings,
+  getAndroidReliabilityStatus,
   addAdhanPlaybackListener,
+  type AndroidReliabilityStatus,
+  type ScheduledPrayerAlarmInput,
 } from '../services/adhan-alarm';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Local Adhan audio files
 const standardAdhanAudio = require('../../assets/audio/adhan.mp3');
 const fajrAdhanAudio = require('../../assets/audio/fajr_adhan.mp3');
+
+function createPrayerCalculationParams() {
+  const params = CalculationMethod.MuslimWorldLeague();
+  params.madhab = Madhab.Shafi;
+  return params;
+}
+
+function buildRollingPrayerAlarms(
+  coords: { latitude: number; longitude: number },
+  calendarDateKey: string,
+  daysCount = 7
+): ScheduledPrayerAlarmInput[] {
+  const coordinates = new Coordinates(coords.latitude, coords.longitude);
+  const params = createPrayerCalculationParams();
+  const [year, month, day] = calendarDateKey.split('-').map(Number);
+  const baseNoon = new Date(year, month - 1, day, 12, 0, 0);
+  const nowMs = Date.now();
+  const alarms: ScheduledPrayerAlarmInput[] = [];
+
+  for (let offset = 0; offset < daysCount; offset++) {
+    const targetDate = new Date(baseNoon);
+    targetDate.setDate(baseNoon.getDate() + offset);
+    const times = new PrayerTimes(coordinates, targetDate, params);
+
+    const dayEntries: { name: PrayerName; time: Date; isFajr: boolean }[] = [
+      { name: 'Fajr', time: times.fajr, isFajr: true },
+      { name: 'Dhuhr', time: times.dhuhr, isFajr: false },
+      { name: 'Asr', time: times.asr, isFajr: false },
+      { name: 'Maghrib', time: times.maghrib, isFajr: false },
+      { name: 'Isha', time: times.isha, isFajr: false },
+    ];
+
+    for (const entry of dayEntries) {
+      const ts = entry.time.getTime();
+      if (ts > nowMs) {
+        alarms.push({
+          prayerName: entry.name,
+          timestampMs: ts,
+          isFajr: entry.isFajr,
+        });
+      }
+    }
+  }
+
+  return alarms;
+}
+
+async function loadMergedReliabilityStatus(): Promise<AndroidReliabilityStatus> {
+  const [status, expoGranted] = await Promise.all([
+    getAndroidReliabilityStatus(),
+    getNotificationPermissionGranted(),
+  ]);
+  return {
+    ...status,
+    notificationsEnabled:
+      Platform.OS === 'android' && isNativeAlarmAvailable()
+        ? status.notificationsEnabled
+        : expoGranted,
+  };
+}
 
 // Baseline fallback coordinates (Manila, Philippines)
 const FALLBACK_LOCATION = {
@@ -383,22 +451,50 @@ export default function HomeScreen() {
   const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResult | null>(null);
   const [isUpdateBannerVisible, setIsUpdateBannerVisible] = useState<boolean>(false);
 
-  // Background Adhan Native Service sync & Battery Optimization state
+  // Background Adhan Native Service sync & Android Reliability state
   const [isNativeAdhanPlaying, setIsNativeAdhanPlaying] = useState<boolean>(false);
-  const [isBatteryOptiIgnored, setIsBatteryOptiIgnored] = useState<boolean>(true);
+  const [isLocationResolved, setIsLocationResolved] = useState<boolean>(false);
+  const hasPromptedNotificationPermissionRef = useRef<boolean>(false);
+  const [reliabilityStatus, setReliabilityStatus] = useState<AndroidReliabilityStatus>({
+    notificationsEnabled: true,
+    canScheduleExactAlarms: true,
+    canUseFullScreenIntent: true,
+    isBatteryOptimizationIgnored: true,
+    oemInfo: {
+      manufacturer: '',
+      brand: '',
+      sdkInt: 0,
+      oemCategory: 'standard',
+      hasOemRestrictions: false,
+    },
+  });
   const [isBatteryBannerDismissed, setIsBatteryBannerDismissed] = useState<boolean>(false);
+  const [isReliabilityExpanded, setIsReliabilityExpanded] = useState<boolean>(false);
+  const [isTestAlarmPending, setIsTestAlarmPending] = useState<boolean>(false);
+  const [testAlarmMessage, setTestAlarmMessage] = useState<string | null>(null);
 
-  // Synchronize native background Adhan service state with in-app UI
+  const refreshReliabilityStatus = useCallback(async () => {
+    try {
+      const merged = await loadMergedReliabilityStatus();
+      setReliabilityStatus(merged);
+    } catch {}
+  }, []);
+
+  // Synchronize native background Adhan service & Android permission states with in-app UI
   useEffect(() => {
     let isMounted = true;
     const syncStatus = async () => {
       try {
-        const status = await getAdhanPlaybackStatus();
+        const [status, mergedReliability] = await Promise.all([
+          getAdhanPlaybackStatus(),
+          loadMergedReliabilityStatus(),
+        ]);
         if (isMounted) {
           setIsNativeAdhanPlaying(status.isPlaying);
           if (status.isPlaying && status.prayerName) {
             setCurrentlyPlayingPrayer(status.prayerName as PrayerName);
           }
+          setReliabilityStatus(mergedReliability);
         }
       } catch {}
     };
@@ -433,18 +529,11 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Check Android Background execution permissions (Battery Optimization + Exact Alarms)
+  // Load Android banner collapse/dismiss preference on mount
   useEffect(() => {
     let isMounted = true;
     void (async () => {
       try {
-        const [ignored, canExact] = await Promise.all([
-          isBatteryOptimizationIgnored(),
-          canScheduleExactAlarms(),
-        ]);
-        if (isMounted) {
-          setIsBatteryOptiIgnored(ignored && canExact);
-        }
         const dismissed = await AsyncStorage.getItem('@sambayang_battery_banner_dismissed');
         if (isMounted && dismissed === 'true') {
           setIsBatteryBannerDismissed(true);
@@ -456,22 +545,68 @@ export default function HomeScreen() {
     };
   }, []);
 
-  const handleRequestBatteryOptimization = async () => {
-    const canExact = await canScheduleExactAlarms();
-    if (!canExact) {
-      await requestScheduleExactAlarmPermission();
+  const allReliabilityChecksPassed =
+    reliabilityStatus.notificationsEnabled &&
+    reliabilityStatus.canScheduleExactAlarms &&
+    reliabilityStatus.canUseFullScreenIntent &&
+    reliabilityStatus.isBatteryOptimizationIgnored;
+
+  const handleFixNotifications = async () => {
+    const granted = await requestNotificationPermissions();
+    if (!granted) {
+      await openNotificationSettings();
     }
+    await refreshReliabilityStatus();
+  };
+
+  const handleFixExactAlarms = async () => {
+    await requestScheduleExactAlarmPermission();
+    await refreshReliabilityStatus();
+  };
+
+  const handleFixFullScreenIntent = async () => {
+    await requestFullScreenIntentPermission();
+    await refreshReliabilityStatus();
+  };
+
+  const handleRequestBatteryOptimization = async () => {
     await requestIgnoreBatteryOptimizations();
-    const [ignored, updatedCanExact] = await Promise.all([
-      isBatteryOptimizationIgnored(),
-      canScheduleExactAlarms(),
-    ]);
-    setIsBatteryOptiIgnored(ignored && updatedCanExact);
+    await refreshReliabilityStatus();
+  };
+
+  const handleOpenOemBackgroundSettings = async () => {
+    await openOemBackgroundSettings();
   };
 
   const handleDismissBatteryBanner = async () => {
     setIsBatteryBannerDismissed(true);
+    setIsReliabilityExpanded(false);
     await AsyncStorage.setItem('@sambayang_battery_banner_dismissed', 'true');
+  };
+
+  const handleTestNativeAlarm = async () => {
+    if (isTestAlarmPending) return;
+    if (!isNativeAlarmAvailable()) {
+      Alert.alert(
+        'Native Alarm Requires Android APK Build',
+        'Install the compiled Android APK (not Expo Go) to test native AlarmManager & lockscreen Adhan delivery.'
+      );
+      return;
+    }
+
+    setIsTestAlarmPending(true);
+    setTestAlarmMessage('Test alarm armed! Lock your screen — triggers in 5 seconds...');
+    const scheduledAt = await scheduleTestAlarm(5, false);
+    if (!scheduledAt) {
+      setIsTestAlarmPending(false);
+      setTestAlarmMessage('Unable to schedule test alarm. Check Exact Alarm & Notification settings above.');
+      return;
+    }
+
+    setTimeout(() => {
+      setIsTestAlarmPending(false);
+      setTestAlarmMessage(null);
+    }, 7000);
   };
 
   // Check for updates in the background on startup
@@ -612,11 +747,13 @@ export default function HomeScreen() {
           resolvedName = `${lat.toFixed(2)}°, ${lng.toFixed(2)}°`;
         }
       }
-    } catch {
-      // Use fallback coordinates smoothly
-    }
+      } catch {
+        // Use fallback coordinates smoothly
+      } finally {
+        setIsLocationResolved(true);
+      }
 
-    setLocationName(resolvedName);
+      setLocationName(resolvedName);
 
     // Fetch Open-Meteo weather
     try {
@@ -681,8 +818,7 @@ export default function HomeScreen() {
   // Memoized strictly on coordinates and calendar date key (changes at midnight), NOT on 1-second clock!
   const dailyPrayers = useMemo(() => {
     const coordinates = new Coordinates(coords.latitude, coords.longitude);
-    const params = CalculationMethod.MuslimWorldLeague();
-    params.madhab = Madhab.Shafi;
+    const params = createPrayerCalculationParams();
 
     // Use calendar date key at noon to guarantee stable daily calculations across DST/time boundaries
     const [year, month, day] = calendarDateKey.split('-').map(Number);
@@ -832,30 +968,45 @@ export default function HomeScreen() {
     return getIslamicEventInfo(new Date(todayDateString));
   }, [todayDateString]);
 
-  // Schedule native notifications & exact alarms whenever settings, location, or calendar date changes.
-  // Next-occurrence scheduling: if today's time has passed (especially Fajr), tomorrow's time is scheduled,
-  // ensuring tomorrow morning's Fajr alarm is 100% guaranteed to fire.
+  // Schedule single authoritative native multi-day alarm queue + post-Salah Du'a reminders
   useEffect(() => {
+    if (!isLocationResolved) {
+      return;
+    }
+
     let isCancelled = false;
-    void (async () => {
+
+    const rescheduleAll = async () => {
       try {
-        if (!isNotificationsEnabled) {
-          await cancelAllPrayerNotifications();
-          await cancelAllPrayerAlarms();
-          return;
-        }
-
-        const granted = await requestNotificationPermissions();
-        if (!granted || isCancelled) {
-          return;
-        }
-
         // Cancel previous to prevent duplicate schedules
         await cancelAllPrayerNotifications();
         await cancelAllPrayerAlarms();
 
+        if (!isNotificationsEnabled || isCancelled) {
+          return;
+        }
+
+        // Request POST_NOTIFICATIONS sequentially ONLY after Location prompt has resolved
+        let granted = await getNotificationPermissionGranted();
+        if (!granted && !hasPromptedNotificationPermissionRef.current && !isCancelled) {
+          hasPromptedNotificationPermissionRef.current = true;
+          granted = await requestNotificationPermissions();
+        }
+        if (!isCancelled) {
+          void refreshReliabilityStatus();
+        }
+        if (isCancelled) {
+          return;
+        }
+
         const now = new Date();
         const { prayersList, tomorrowPrayerMap } = dailyPrayers;
+        const nativeAvailable = isNativeAlarmAvailable();
+
+        if (nativeAvailable) {
+          const rollingAlarms = buildRollingPrayerAlarms(coords, calendarDateKey, 7);
+          await schedulePrayerAlarmsBatch(rollingAlarms);
+        }
 
         for (const prayer of prayersList) {
           if (isCancelled) break;
@@ -867,20 +1018,36 @@ export default function HomeScreen() {
             : tomorrowPrayerMap[prayer.id];
 
           if (scheduledTime.getTime() > now.getTime()) {
-            await schedulePrayerNotification(prayer.name, scheduledTime, locationName);
-            await schedulePostPrayerDuaNotification(prayer.name, scheduledTime, locationName);
-            await schedulePrayerAlarm(prayer.name, scheduledTime, isFajr);
+            if (!nativeAvailable) {
+              if (granted) {
+                await schedulePrayerNotification(prayer.name, scheduledTime, locationName);
+              }
+              await schedulePrayerAlarm(prayer.name, scheduledTime, isFajr);
+            }
+            if (granted) {
+              await schedulePostPrayerDuaNotification(prayer.name, scheduledTime, locationName);
+            }
           }
         }
       } catch (err) {
-        console.warn('[Notifications] Scheduling fallback error:', err);
+        console.warn('Error rescheduling prayer notifications:', err);
       }
-    })();
+    };
+
+    void rescheduleAll();
 
     return () => {
       isCancelled = true;
     };
-  }, [isNotificationsEnabled, locationName, dailyPrayers]);
+  }, [
+    isLocationResolved,
+    coords,
+    locationName,
+    isNotificationsEnabled,
+    dailyPrayers,
+    calendarDateKey,
+    refreshReliabilityStatus,
+  ]);
 
   // Trigger Adhan auto-play when a Fard prayer time arrives (robust 2-minute arrival window)
   useEffect(() => {
@@ -1264,55 +1431,177 @@ export default function HomeScreen() {
           </View>
         )}
 
-        {/* ANDROID BATTERY OPTIMIZATION EXEMPTION BANNER */}
-        {!isBatteryOptiIgnored && !isBatteryBannerDismissed && (
+        {/* ANDROID 15 & OEM ALARM RELIABILITY HUB */}
+        {Platform.OS === 'android' && (
           <View
             style={[
               styles.batteryBannerCard,
               { marginTop: 12, marginBottom: 4 },
-              isDark ? styles.batteryCardDark : styles.batteryCardLight,
+              allReliabilityChecksPassed
+                ? (isDark ? styles.reliabilityReadyDark : styles.reliabilityReadyLight)
+                : (isDark ? styles.batteryCardDark : styles.batteryCardLight),
             ]}>
-            <View style={styles.batteryCardContent}>
-              <View style={styles.batteryIconContainer}>
-                <Ionicons name="battery-charging-outline" size={22} color="#F59E0B" />
+            <View
+              style={[
+                styles.batteryCardContent,
+                !(isReliabilityExpanded || (!allReliabilityChecksPassed && !isBatteryBannerDismissed)) && {
+                  marginBottom: 0,
+                },
+              ]}>
+              <View
+                style={[
+                  styles.batteryIconContainer,
+                  allReliabilityChecksPassed && { backgroundColor: 'rgba(16, 185, 129, 0.16)' },
+                ]}>
+                <Ionicons
+                  name={allReliabilityChecksPassed ? 'shield-checkmark-outline' : 'warning-outline'}
+                  size={22}
+                  color={allReliabilityChecksPassed ? '#10B981' : '#F59E0B'}
+                />
               </View>
               <View style={styles.batteryTextContainer}>
                 <Text style={[styles.batteryTitle, { color: themeTextColor }]}>
-                  Unrestricted Adhan Alarms
+                  {allReliabilityChecksPassed
+                    ? 'Android Adhan Alarms Ready'
+                    : 'Enable Reliable Adhan Alerts'}
                 </Text>
                 <Text style={[styles.batteryDescription, { color: themeSecondaryTextColor }]}>
-                  Exempt Sambayang Reminder from battery optimization and allow exact alarms so the Adhan always sounds on time when locked.
+                  {allReliabilityChecksPassed
+                    ? `All 4 Android safeguards active${reliabilityStatus.oemInfo.hasOemRestrictions ? ` (${reliabilityStatus.oemInfo.manufacturer} detected — check Autostart)` : ''}.`
+                    : 'Android 14/15 & OEM phones require these permissions so locked-screen prayer alarms fire reliably.'}
                 </Text>
               </View>
               <Pressable
-                onPress={handleDismissBatteryBanner}
+                onPress={() => {
+                  if (!allReliabilityChecksPassed && !isBatteryBannerDismissed && !isReliabilityExpanded) {
+                    void handleDismissBatteryBanner();
+                  } else {
+                    setIsReliabilityExpanded((prev) => !prev);
+                  }
+                }}
                 hitSlop={10}
                 accessibilityRole="button"
-                accessibilityLabel="Dismiss battery optimization banner"
+                accessibilityLabel="Toggle Android reliability checklist"
                 style={styles.batteryDismissButton}>
-                <Ionicons name="close" size={18} color={themeSecondaryTextColor} />
+                <Ionicons
+                  name={
+                    isReliabilityExpanded || (!allReliabilityChecksPassed && !isBatteryBannerDismissed)
+                      ? 'chevron-up'
+                      : 'chevron-down'
+                  }
+                  size={18}
+                  color={themeSecondaryTextColor}
+                />
               </Pressable>
             </View>
 
-            <Pressable
-              onPress={handleRequestBatteryOptimization}
-              accessibilityRole="button"
-              accessibilityLabel="Exempt from battery optimization"
-              style={({ pressed }) => [
-                styles.batteryActionButton,
-                pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] },
-              ]}>
-              <LinearGradient
-                colors={['#D97706', '#B45309']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.batteryGradientButton}>
-                <Ionicons name="shield-checkmark-outline" size={17} color="#FFFFFF" />
-                <Text style={styles.batteryButtonText}>
-                  Allow Background Alarms
-                </Text>
-              </LinearGradient>
-            </Pressable>
+            {(isReliabilityExpanded || (!allReliabilityChecksPassed && !isBatteryBannerDismissed)) && (
+              <View style={styles.reliabilityChecklist}>
+                {[
+                  {
+                    key: 'notifications',
+                    label: 'Notifications Permission',
+                    detail: 'Required on Android 13–15 to display and sound alerts.',
+                    ok: reliabilityStatus.notificationsEnabled,
+                    onFix: handleFixNotifications,
+                  },
+                  {
+                    key: 'exact',
+                    label: 'Exact Prayer Alarms',
+                    detail: 'Lets prayers wake Doze Mode at exact minute boundaries.',
+                    ok: reliabilityStatus.canScheduleExactAlarms,
+                    onFix: handleFixExactAlarms,
+                  },
+                  {
+                    key: 'fsi',
+                    label: 'Lockscreen Full-Screen Alerts',
+                    detail: 'Required on Android 14+ to wake and surface alarm UI.',
+                    ok: reliabilityStatus.canUseFullScreenIntent,
+                    onFix: handleFixFullScreenIntent,
+                  },
+                  {
+                    key: 'battery',
+                    label: 'Unrestricted Battery',
+                    detail: 'Prevents Android from putting alarm background tasks to sleep.',
+                    ok: reliabilityStatus.isBatteryOptimizationIgnored,
+                    onFix: handleRequestBatteryOptimization,
+                  },
+                ].map((item) => (
+                  <View key={item.key} style={styles.reliabilityRow}>
+                    <Ionicons
+                      name={item.ok ? 'checkmark-circle' : 'alert-circle'}
+                      size={18}
+                      color={item.ok ? '#10B981' : '#F59E0B'}
+                    />
+                    <View style={styles.reliabilityRowText}>
+                      <Text style={[styles.reliabilityRowTitle, { color: themeTextColor }]}>
+                        {item.label}
+                      </Text>
+                      <Text style={[styles.reliabilityRowSubtitle, { color: themeSecondaryTextColor }]}>
+                        {item.detail}
+                      </Text>
+                    </View>
+                    {!item.ok && (
+                      <Pressable
+                        onPress={() => void item.onFix()}
+                        style={styles.reliabilityFixButton}
+                        accessibilityRole="button"
+                        accessibilityLabel={`Fix ${item.label}`}>
+                        <Text style={styles.reliabilityFixButtonText}>Allow</Text>
+                      </Pressable>
+                    )}
+                  </View>
+                ))}
+
+                {reliabilityStatus.oemInfo.hasOemRestrictions && (
+                  <View style={styles.reliabilityRow}>
+                    <Ionicons name="phone-portrait-outline" size={18} color="#3B82F6" />
+                    <View style={styles.reliabilityRowText}>
+                      <Text style={[styles.reliabilityRowTitle, { color: themeTextColor }]}>
+                        {reliabilityStatus.oemInfo.manufacturer || 'Device'} Autostart / Background
+                      </Text>
+                      <Text style={[styles.reliabilityRowSubtitle, { color: themeSecondaryTextColor }]}>
+                        Allow Autostart & disable background sleep in device settings.
+                      </Text>
+                    </View>
+                    <Pressable
+                      onPress={() => void handleOpenOemBackgroundSettings()}
+                      style={[styles.reliabilityFixButton, { backgroundColor: '#2563EB' }]}
+                      accessibilityRole="button"
+                      accessibilityLabel="Open device OEM background settings">
+                      <Text style={styles.reliabilityFixButtonText}>Open</Text>
+                    </Pressable>
+                  </View>
+                )}
+
+                {testAlarmMessage && (
+                  <Text style={[styles.testAlarmStatusText, { color: isDark ? '#93C5FD' : '#1D4ED8' }]}>
+                    {testAlarmMessage}
+                  </Text>
+                )}
+
+                <Pressable
+                  onPress={() => void handleTestNativeAlarm()}
+                  disabled={isTestAlarmPending}
+                  accessibilityRole="button"
+                  accessibilityLabel="Test native alarm in 5 seconds"
+                  style={({ pressed }) => [
+                    styles.batteryActionButton,
+                    (pressed || isTestAlarmPending) && { opacity: 0.85, transform: [{ scale: 0.98 }] },
+                  ]}>
+                  <LinearGradient
+                    colors={isTestAlarmPending ? ['#6B7280', '#4B5563'] : ['#2563EB', '#1D4ED8']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.batteryGradientButton}>
+                    <Ionicons name="alarm-outline" size={17} color="#FFFFFF" />
+                    <Text style={styles.batteryButtonText}>
+                      {isTestAlarmPending ? 'Test Alarm Armed (5s)...' : 'Test Native Alarm (5s)'}
+                    </Text>
+                  </LinearGradient>
+                </Pressable>
+              </View>
+            )}
           </View>
         )}
 
@@ -2286,5 +2575,49 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '700',
+  },
+  reliabilityReadyLight: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  reliabilityReadyDark: {
+    backgroundColor: '#0F1F18',
+    borderColor: '#065F46',
+  },
+  reliabilityChecklist: {
+    gap: 10,
+    marginTop: 4,
+  },
+  reliabilityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  reliabilityRowText: {
+    flex: 1,
+  },
+  reliabilityRowTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  reliabilityRowSubtitle: {
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  reliabilityFixButton: {
+    backgroundColor: '#D97706',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+  },
+  reliabilityFixButtonText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  testAlarmStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

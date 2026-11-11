@@ -20,7 +20,9 @@ class AdhanBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val action = intent.action
         val isBoot = action == Intent.ACTION_BOOT_COMPLETED ||
-                     action == "android.intent.action.QUICKBOOT_POWERON"
+                     action == "android.intent.action.QUICKBOOT_POWERON" ||
+                     action == "com.htc.intent.action.QUICKBOOT_POWERON"
+        val isPackageUpdated = action == Intent.ACTION_MY_PACKAGE_REPLACED
         val isExactAlarmPermChanged = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             action == AlarmManager.ACTION_SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED
         } else {
@@ -29,7 +31,7 @@ class AdhanBootReceiver : BroadcastReceiver() {
         val isTimeChanged = action == Intent.ACTION_TIME_CHANGED ||
                             action == Intent.ACTION_TIMEZONE_CHANGED
 
-        if (isBoot || isExactAlarmPermChanged || isTimeChanged) {
+        if (isBoot || isPackageUpdated || isExactAlarmPermChanged || isTimeChanged) {
             Log.d(TAG, "Triggered by action '$action'. Restoring scheduled prayer alarms.")
             AdhanAlarmModule.restoreScheduledAlarms(context)
         }
