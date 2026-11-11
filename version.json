@@ -4,7 +4,7 @@
   "minSupportedVersion": "1.0.0",
   "apkFileName": "SambayangReminder.apk",
   "downloadUrl": "https://github.com/bensdev932/SambayangReminder/releases/download/v1.0.9/SambayangReminder.apk",
-  "sha256": "",
+  "sha256": "6e0dbfbded5e7cbc3cf531185de4f25e85466b0f27d7a6a1b3ebaa50fc728258",
   "releaseNotes": "Architecture and reliability release: extracted prayer-calendar calculation domain, unified prayer-alert coordinator and Expo platform adapter, and modular Kotlin PrayerQueueStore for multi-day Android Adhan scheduling.",
-  "publishedAt": "2026-11-11T14:10:00Z"
+  "publishedAt": "2026-11-11T14:32:34.230Z"
 }
