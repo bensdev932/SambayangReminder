@@ -190,13 +190,20 @@ test('Domain Prayer Calendar: astronomical calculations and Hijri conversion', (
     assert.strictEqual(prayer.formattedTime, formatPrayerTime(prayer.time));
   }
 
-  // Rolling alarms across 7 days: 7 * 5 = 35 total alarms
-  const noonMs = new Date(2026, 9, 18, 0, 0, 0).getTime();
-  const rolling = buildRollingPrayerAlarms(coords, dateKey, noonMs, 7);
+  // Rolling alarms across 7 days starting strictly before Day 0's Fajr: 7 * 5 = 35 total alarms
+  const beforeDay0FajrMs = window.prayersList[0].time.getTime() - 60_000;
+  const rolling = buildRollingPrayerAlarms(coords, dateKey, beforeDay0FajrMs, 7);
   assert.strictEqual(rolling.length, 35);
   for (let i = 1; i < rolling.length; i++) {
     assert.ok(rolling[i].timestampMs >= rolling[i - 1].timestampMs, 'Rolling alarms must be sorted ascending');
   }
+  const afterDay0FajrRolling = buildRollingPrayerAlarms(
+    coords,
+    dateKey,
+    window.prayersList[0].time.getTime() + 1000,
+    7
+  );
+  assert.strictEqual(afterDay0FajrRolling.length, 34);
 
   // Hijri formatting
   const hijri = getHijriDate(new Date('2026-10-18T12:00:00Z'));
