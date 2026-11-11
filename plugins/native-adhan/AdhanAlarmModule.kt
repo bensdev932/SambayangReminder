@@ -36,10 +36,6 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
 
     companion object {
         private const val TAG = "AdhanAlarmModule"
-        private const val PREFS_NAME = "adhan_alarm_schedules"
-        private const val PREF_KEY_SCHEDULES = "schedules"
-        private const val REQUEST_CODE_TEST = 901
-        private val STANDARD_PRAYERS = listOf("Fajr", "Dhuhr", "Asr", "Maghrib", "Isha")
 
         @Volatile
         private var instance: AdhanAlarmModule? = null
@@ -56,221 +52,30 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
             })
         }
 
-        private fun extractFutureTimestamps(obj: JSONObject, minTimestamp: Long): List<Long> {
-            val result = mutableListOf<Long>()
-            val queueArray = obj.optJSONArray("timestamps")
-            if (queueArray != null) {
-                for (i in 0 until queueArray.length()) {
-                    val ts = queueArray.optLong(i, -1L)
-                    if (ts > minTimestamp) {
-                        result.add(ts)
-                    }
-                }
-            } else {
-                val single = obj.optLong("timestamp", -1L)
-                if (single > minTimestamp) {
-                    result.add(single)
-                }
-            }
-            return result.distinct().sorted()
-        }
-
-        private fun buildScheduleEntryJson(
-            prayerName: String,
-            timestamps: List<Long>,
-            isFajr: Boolean
-        ): JSONObject {
-            val arr = JSONArray()
-            for (ts in timestamps) {
-                arr.put(ts)
-            }
-            return JSONObject().apply {
-                put("prayerName", prayerName)
-                put("timestamp", timestamps.first())
-                put("timestamps", arr)
-                put("isFajr", isFajr)
-            }
-        }
-
         fun scheduleNextQueuedAlarm(context: Context, prayerName: String) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val jsonString = prefs.getString(PREF_KEY_SCHEDULES, null) ?: return
-
-            try {
-                val array = JSONArray(jsonString)
-                val minTimestamp = System.currentTimeMillis() + 5_000L
-                val updatedArray = JSONArray()
-
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    val entryPrayer = obj.optString("prayerName", "")
-                    val isFajr = obj.optBoolean("isFajr", false)
-
-                    if (entryPrayer.equals(prayerName, ignoreCase = true)) {
-                        val remaining = extractFutureTimestamps(obj, minTimestamp)
-                        if (remaining.isNotEmpty()) {
-                            val nextTs = remaining.first()
-                            scheduleExactAlarm(context, entryPrayer, nextTs, isFajr, false)
-                            updatedArray.put(buildScheduleEntryJson(entryPrayer, remaining, isFajr))
-                            Log.d(TAG, "Chained next queued alarm for $entryPrayer at $nextTs (${remaining.size} remaining)")
-                        }
-                    } else {
-                        val remaining = extractFutureTimestamps(obj, System.currentTimeMillis())
-                        if (remaining.isNotEmpty()) {
-                            updatedArray.put(buildScheduleEntryJson(entryPrayer, remaining, isFajr))
-                        }
-                    }
-                }
-
-                prefs.edit().putString(PREF_KEY_SCHEDULES, updatedArray.toString()).apply()
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to chain next queued alarm for $prayerName: ${e.message}", e)
-            }
+            PrayerQueueStore(context).chainNext(prayerName)
         }
 
         fun restoreScheduledAlarms(context: Context) {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val jsonString = prefs.getString(PREF_KEY_SCHEDULES, null) ?: return
-
-            try {
-                val array = JSONArray(jsonString)
-                val now = System.currentTimeMillis()
-                val updatedArray = JSONArray()
-
-                for (i in 0 until array.length()) {
-                    val obj = array.getJSONObject(i)
-                    val prayerName = obj.getString("prayerName")
-                    val isFajr = obj.optBoolean("isFajr", false)
-                    val futureTimestamps = extractFutureTimestamps(obj, now)
-
-                    if (futureTimestamps.isNotEmpty()) {
-                        val nextTs = futureTimestamps.first()
-                        scheduleExactAlarm(context, prayerName, nextTs, isFajr, false)
-                        updatedArray.put(buildScheduleEntryJson(prayerName, futureTimestamps, isFajr))
-                    }
-                }
-
-                prefs.edit().putString(PREF_KEY_SCHEDULES, updatedArray.toString()).apply()
-                Log.d(TAG, "Restored ${updatedArray.length()} future prayer alarm queues upon boot/update.")
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to restore scheduled alarms: ${e.message}", e)
-            }
+            PrayerQueueStore(context).restoreAll()
         }
 
-        private fun getRequestCodeForPrayer(prayerName: String, isTest: Boolean = false): Int {
-            if (isTest) return REQUEST_CODE_TEST
-            return when (prayerName.lowercase()) {
-                "fajr" -> 101
-                "dhuhr" -> 102
-                "asr" -> 103
-                "maghrib" -> 104
-                "isha" -> 105
-                else -> prayerName.hashCode() and 0xFFFF
-            }
-        }
-
-        @SuppressLint("ScheduleExactAlarm")
-        private fun scheduleExactAlarm(
+        fun scheduleExactAlarm(
             context: Context,
             prayerName: String,
             timestampMs: Long,
             isFajr: Boolean,
             isTest: Boolean = false
         ) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, AdhanAlarmReceiver::class.java).apply {
-                putExtra(AdhanPlaybackService.EXTRA_PRAYER_NAME, prayerName)
-                putExtra(AdhanPlaybackService.EXTRA_IS_FAJR, isFajr)
-                putExtra(AdhanAlarmReceiver.EXTRA_IS_TEST, isTest)
-            }
-
-            val requestCode = getRequestCodeForPrayer(prayerName, isTest)
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                requestCode,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            val showIntent = Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                putExtra("prayerName", prayerName)
-            }
-            val showPendingIntent = PendingIntent.getActivity(
-                context,
-                requestCode,
-                showIntent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            try {
-                val canScheduleExact = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    alarmManager.canScheduleExactAlarms()
-                } else {
-                    true
-                }
-
-                if (canScheduleExact) {
-                    // AlarmClockInfo guarantees waking the device from Doze mode
-                    val alarmClockInfo = AlarmManager.AlarmClockInfo(timestampMs, showPendingIntent)
-                    alarmManager.setAlarmClock(alarmClockInfo, pendingIntent)
-                    Log.d(TAG, "Scheduled alarm clock for $prayerName at $timestampMs (code $requestCode)")
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    // Fallback to setAndAllowWhileIdle if exact alarm permission not granted
-                    alarmManager.setAndAllowWhileIdle(
-                        AlarmManager.RTC_WAKEUP,
-                        timestampMs,
-                        pendingIntent
-                    )
-                    Log.d(TAG, "Exact alarms not permitted. Scheduled fallback setAndAllowWhileIdle for $prayerName at $timestampMs")
-                } else {
-                    alarmManager.set(
-                        AlarmManager.RTC_WAKEUP,
-                        timestampMs,
-                        pendingIntent
-                    )
-                    Log.d(TAG, "Scheduled standard alarm for $prayerName at $timestampMs")
-                }
-            } catch (e: SecurityException) {
-                Log.w(TAG, "SecurityException scheduling exact alarm for $prayerName. Falling back to setAndAllowWhileIdle: ${e.message}")
-                try {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        alarmManager.setAndAllowWhileIdle(
-                            AlarmManager.RTC_WAKEUP,
-                            timestampMs,
-                            pendingIntent
-                        )
-                    } else {
-                        alarmManager.set(AlarmManager.RTC_WAKEUP, timestampMs, pendingIntent)
-                    }
-                } catch (fallbackErr: Exception) {
-                    Log.e(TAG, "Failed fallback alarm scheduling for $prayerName: ${fallbackErr.message}", fallbackErr)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to set alarm for $prayerName: ${e.message}", e)
-            }
+            AdhanAlarmScheduler.scheduleExactAlarm(context, prayerName, timestampMs, isFajr, isTest)
         }
 
-        private fun cancelAlarm(context: Context, prayerName: String) {
-            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-            val intent = Intent(context, AdhanAlarmReceiver::class.java)
-            val requestCode = getRequestCodeForPrayer(prayerName)
-            val pendingIntent = PendingIntent.getBroadcast(
-                context,
-                requestCode,
-                intent,
-                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
-            )
-
-            if (pendingIntent != null) {
-                alarmManager.cancel(pendingIntent)
-                pendingIntent.cancel()
-            }
+        fun cancelAlarm(context: Context, prayerName: String) {
+            AdhanAlarmScheduler.cancelAlarm(context, prayerName)
         }
-        private fun cancelAllPendingAlarms(context: Context) {
-            for (prayer in STANDARD_PRAYERS) {
-                cancelAlarm(context, prayer)
-            }
+
+        fun cancelAllPendingAlarms(context: Context) {
+            AdhanAlarmScheduler.cancelAllPendingAlarms(context)
         }
     }
 
@@ -345,8 +150,11 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
         }
 
         try {
-            scheduleExactAlarm(reactApplicationContext, prayerName, targetMs, isFajr)
-            persistSchedule(prayerName, targetMs, isFajr)
+            AdhanAlarmScheduler.scheduleExactAlarm(reactApplicationContext, prayerName, targetMs, isFajr)
+            val store = PrayerQueueStore(reactApplicationContext)
+            val current = store.readQueue().toMutableList()
+            current.add(PrayerQueueEntry(prayerName, listOf(targetMs), isFajr))
+            store.replaceQueue(current)
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("SCHEDULE_ERROR", e.message, e)
@@ -356,11 +164,9 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun cancelAllPrayerAlarms(promise: Promise) {
         try {
-            cancelAllPendingAlarms(reactApplicationContext)
-
-            val prefs = reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.edit().clear().apply()
-
+            val store = PrayerQueueStore(reactApplicationContext)
+            AdhanAlarmScheduler.cancelAllPendingAlarms(reactApplicationContext)
+            store.clear()
             promise.resolve(true)
         } catch (e: Exception) {
             promise.reject("CANCEL_ERROR", e.message, e)
@@ -390,37 +196,16 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
     @ReactMethod
     fun schedulePrayerAlarmsBatch(alarms: ReadableArray, promise: Promise) {
         try {
-            val now = System.currentTimeMillis()
-            val grouped = mutableMapOf<String, Pair<Boolean, MutableList<Long>>>()
-
+            val list = mutableListOf<PrayerQueueEntry>()
             for (i in 0 until alarms.size()) {
                 val item = alarms.getMap(i) ?: continue
                 val prayerName = item.getString("prayerName") ?: continue
                 val timestampMs = item.getDouble("timestampMs").toLong()
                 val isFajr = item.hasKey("isFajr") && item.getBoolean("isFajr")
-                if (timestampMs <= now) continue
-
-                val entry = grouped.getOrPut(prayerName) { isFajr to mutableListOf() }
-                entry.second.add(timestampMs)
+                list.add(PrayerQueueEntry(prayerName, listOf(timestampMs), isFajr))
             }
-
-            cancelAllPendingAlarms(reactApplicationContext)
-
-            val schedulesArray = JSONArray()
-            var scheduledCount = 0
-            for ((prayerName, data) in grouped) {
-                val (isFajr, rawTimestamps) = data
-                val sortedTimestamps = rawTimestamps.distinct().sorted()
-                if (sortedTimestamps.isEmpty()) continue
-
-                val nextTs = sortedTimestamps.first()
-                scheduleExactAlarm(reactApplicationContext, prayerName, nextTs, isFajr, false)
-                scheduledCount++
-                schedulesArray.put(buildScheduleEntryJson(prayerName, sortedTimestamps, isFajr))
-            }
-
-            val prefs = reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            prefs.edit().putString(PREF_KEY_SCHEDULES, schedulesArray.toString()).apply()
+            val store = PrayerQueueStore(reactApplicationContext)
+            val scheduledCount = store.replaceQueue(list)
             promise.resolve(scheduledCount)
         } catch (e: Exception) {
             promise.reject("BATCH_SCHEDULE_ERROR", e.message, e)
@@ -433,7 +218,7 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
             val clampedSeconds = delaySeconds.coerceIn(2, 300)
             val triggerAt = System.currentTimeMillis() + (clampedSeconds * 1000L)
             val label = if (isFajr) "Fajr (Test)" else "Prayer (Test)"
-            scheduleExactAlarm(reactApplicationContext, label, triggerAt, isFajr, true)
+            AdhanAlarmScheduler.scheduleExactAlarm(reactApplicationContext, label, triggerAt, isFajr, true)
             promise.resolve(triggerAt.toDouble())
         } catch (e: Exception) {
             promise.reject("TEST_ALARM_ERROR", e.message, e)
@@ -699,24 +484,5 @@ class AdhanAlarmModule(reactContext: ReactApplicationContext) :
         } catch (e: Exception) {
             promise.reject("HASH_ERROR", e.message, e)
         }
-    }
-
-    private fun persistSchedule(prayerName: String, timestampMs: Long, isFajr: Boolean) {
-        val prefs = reactApplicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val jsonString = prefs.getString(PREF_KEY_SCHEDULES, "[]")
-        val array = JSONArray(jsonString)
-
-        val updatedArray = JSONArray()
-        for (i in 0 until array.length()) {
-            val obj = array.getJSONObject(i)
-            if (obj.getString("prayerName") != prayerName) {
-                updatedArray.put(obj)
-            }
-        }
-
-        val newObj = buildScheduleEntryJson(prayerName, listOf(timestampMs), isFajr)
-        updatedArray.put(newObj)
-
-        prefs.edit().putString(PREF_KEY_SCHEDULES, updatedArray.toString()).apply()
     }
 }

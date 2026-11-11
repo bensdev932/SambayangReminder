@@ -1,8 +1,7 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useSyncExternalStore } from 'react';
 import {
   ActivityIndicator,
   Alert,
-  AppState,
   Platform,
   Pressable,
   RefreshControl,
@@ -17,7 +16,6 @@ import { LinearGradient } from 'expo-linear-gradient';
 import * as Location from 'expo-location';
 import { useAudioPlayer, useAudioPlayerStatus, setAudioModeAsync } from 'expo-audio';
 import { Ionicons } from '@expo/vector-icons';
-import { Coordinates, CalculationMethod, Madhab, PrayerTimes } from 'adhan';
 import { MonthWindowCountdown } from '../components/month-window-countdown';
 import { PostSalahDuaModal } from '../components/post-salah-dua-modal';
 import { InAppUpdateModal } from '../components/in-app-update-modal';
@@ -26,99 +24,20 @@ import {
   getCurrentAppVersion,
   type UpdateCheckResult,
 } from '../services/update-service';
-import {
-  initNotificationHandler,
-  setupNotificationChannel,
-  getNotificationPermissionGranted,
-  requestNotificationPermissions,
-  cancelAllPrayerNotifications,
-  schedulePrayerNotification,
-  schedulePostPrayerDuaNotification,
-  addNotificationResponseListener,
-} from '../services/notifications';
-import {
-  isNativeAlarmAvailable,
-  schedulePrayerAlarm,
-  schedulePrayerAlarmsBatch,
-  scheduleTestAlarm,
-  cancelAllPrayerAlarms,
-  getAdhanPlaybackStatus,
-  stopCurrentAdhan,
-  requestIgnoreBatteryOptimizations,
-  requestScheduleExactAlarmPermission,
-  requestFullScreenIntentPermission,
-  openNotificationSettings,
-  openOemBackgroundSettings,
-  getAndroidReliabilityStatus,
-  addAdhanPlaybackListener,
-  type AndroidReliabilityStatus,
-  type ScheduledPrayerAlarmInput,
-} from '../services/adhan-alarm';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getSharedPrayerAlertCoordinator } from '../adapters/expo-prayer-platform-adapter';
+import {
+  computeDailyPrayerWindow,
+  evaluatePrayerArrival,
+  formatHijriDate,
+  formatPrayerTime,
+  getIslamicEventInfo,
+  type PrayerName,
+} from '../domain/prayer-calendar';
 
 // Local Adhan audio files
 const standardAdhanAudio = require('../../assets/audio/adhan.mp3');
 const fajrAdhanAudio = require('../../assets/audio/fajr_adhan.mp3');
-
-function createPrayerCalculationParams() {
-  const params = CalculationMethod.MuslimWorldLeague();
-  params.madhab = Madhab.Shafi;
-  return params;
-}
-
-function buildRollingPrayerAlarms(
-  coords: { latitude: number; longitude: number },
-  calendarDateKey: string,
-  daysCount = 7
-): ScheduledPrayerAlarmInput[] {
-  const coordinates = new Coordinates(coords.latitude, coords.longitude);
-  const params = createPrayerCalculationParams();
-  const [year, month, day] = calendarDateKey.split('-').map(Number);
-  const baseNoon = new Date(year, month - 1, day, 12, 0, 0);
-  const nowMs = Date.now();
-  const alarms: ScheduledPrayerAlarmInput[] = [];
-
-  for (let offset = 0; offset < daysCount; offset++) {
-    const targetDate = new Date(baseNoon);
-    targetDate.setDate(baseNoon.getDate() + offset);
-    const times = new PrayerTimes(coordinates, targetDate, params);
-
-    const dayEntries: { name: PrayerName; time: Date; isFajr: boolean }[] = [
-      { name: 'Fajr', time: times.fajr, isFajr: true },
-      { name: 'Dhuhr', time: times.dhuhr, isFajr: false },
-      { name: 'Asr', time: times.asr, isFajr: false },
-      { name: 'Maghrib', time: times.maghrib, isFajr: false },
-      { name: 'Isha', time: times.isha, isFajr: false },
-    ];
-
-    for (const entry of dayEntries) {
-      const ts = entry.time.getTime();
-      if (ts > nowMs) {
-        alarms.push({
-          prayerName: entry.name,
-          timestampMs: ts,
-          isFajr: entry.isFajr,
-        });
-      }
-    }
-  }
-
-  return alarms;
-}
-
-async function loadMergedReliabilityStatus(): Promise<AndroidReliabilityStatus> {
-  const [status, expoGranted] = await Promise.all([
-    getAndroidReliabilityStatus(),
-    getNotificationPermissionGranted(),
-  ]);
-  return {
-    ...status,
-    notificationsEnabled:
-      Platform.OS === 'android' && isNativeAlarmAvailable()
-        ? status.notificationsEnabled
-        : expoGranted,
-  };
-}
 
 // Baseline fallback coordinates (Manila, Philippines)
 const FALLBACK_LOCATION = {
@@ -126,8 +45,6 @@ const FALLBACK_LOCATION = {
   longitude: 120.9842,
   name: 'Manila, Philippines',
 };
-
-type PrayerName = 'Fajr' | 'Dhuhr' | 'Asr' | 'Maghrib' | 'Isha';
 
 interface PrayerItem {
   id: PrayerName;
@@ -192,231 +109,6 @@ function formatGregorianDate(date: Date): string {
   return `${days[date.getDay()]}, ${date.getDate()} ${months[date.getMonth()]}`;
 }
 
-const HIJRI_MONTH_NAMES = [
-  'Muharram',
-  'Safar',
-  "Rabi' al-Awwal",
-  "Rabi' al-Thani",
-  'Jumada al-Ula',
-  'Jumada al-Akhirah',
-  'Rajab',
-  "Sha'ban",
-  'Ramadan',
-  'Shawwal',
-  "Dhu al-Qi'dah",
-  'Dhu al-Hijjah',
-];
-
-function getHijriDate(d: Date): { year: number; month: number; day: number; monthName: string } {
-  try {
-    const formatter = new Intl.DateTimeFormat('en-u-ca-islamic-umalqura', {
-      year: 'numeric',
-      month: 'numeric',
-      day: 'numeric',
-    });
-    const parts = formatter.formatToParts(d);
-    const m = parseInt(parts.find((p) => p.type === 'month')?.value || '', 10);
-    const day = parseInt(parts.find((p) => p.type === 'day')?.value || '', 10);
-    const y = parseInt(parts.find((p) => p.type === 'year')?.value || '', 10);
-    if (!isNaN(m) && !isNaN(day) && !isNaN(y) && m >= 1 && m <= 12) {
-      return { year: y, month: m, day, monthName: HIJRI_MONTH_NAMES[m - 1] };
-    }
-  } catch {
-    // Graceful fallback to astronomical calculation
-  }
-
-  // Astronomical / Kuweit tabular algorithmic conversion (100% offline & portable)
-  const year = d.getFullYear();
-  const month = d.getMonth() + 1;
-  const day = d.getDate();
-
-  const jd =
-    Math.floor((1461 * (year + 4800 + Math.floor((month - 14) / 12))) / 4) +
-    Math.floor((367 * (month - 2 - 12 * Math.floor((month - 14) / 12))) / 12) -
-    Math.floor((3 * Math.floor((year + 4900 + Math.floor((month - 14) / 12)) / 100)) / 4) +
-    day -
-    32075;
-
-  const l = jd - 1948440 + 10632;
-  const n = Math.floor((l - 1) / 10631);
-  const l1 = l - 10631 * n + 354;
-  const j =
-    Math.floor((10985 - l1) / 5316) * Math.floor((50 * l1) / 17719) +
-    Math.floor(l1 / 5670) * Math.floor((43 * l1) / 15238);
-  const l2 =
-    l1 -
-    Math.floor((30 - j) / 15) * Math.floor((17719 * j) / 50) -
-    Math.floor(j / 16) * Math.floor((15238 * j) / 43) +
-    29;
-  const m = Math.max(1, Math.min(12, Math.floor((24 * l2) / 709)));
-  const dH = Math.max(1, Math.min(30, l2 - Math.floor((709 * m) / 24)));
-  const yH = 30 * n + j - 30;
-
-  return { year: yH, month: m, day: dH, monthName: HIJRI_MONTH_NAMES[m - 1] };
-}
-
-function formatHijriDate(date: Date): string {
-  const h = getHijriDate(date);
-  return `${h.day} ${h.monthName} ${h.year} AH`;
-}
-
-function formatPrayerTime(date: Date): string {
-  let hours = date.getHours();
-  const minutes = date.getMinutes();
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  hours = hours % 12;
-  hours = hours ? hours : 12;
-  const strHours = String(hours).padStart(2, '0');
-  const strMinutes = String(minutes).padStart(2, '0');
-  return `${strHours}:${strMinutes} ${ampm}`;
-}
-
-interface IslamicEventInfo {
-  targetTitle: string;
-  targetHijriLabel: string;
-  greeting: string | null;
-  targetDate: Date;
-  targetDateFormatted: string;
-  days: number;
-  hours: number;
-  minutes: number;
-  iconName: keyof typeof Ionicons.glyphMap;
-  isAnticipatingRamadan: boolean;
-  daysUntilShaban: number;
-  preparationProgressPercent: number;
-  duaArabic: string;
-  duaTranslation: string;
-}
-
-function getIslamicEventInfo(now: Date): IslamicEventInfo {
-  const { month, day } = getHijriDate(now);
-
-  let targetTitle = 'Countdown to Ramadan';
-  let targetHijriLabel = '1 Ramadan';
-  let targetMonth = 9;
-  let targetDay = 1;
-  let greeting: string | null = null;
-  let iconName: keyof typeof Ionicons.glyphMap = 'moon-outline';
-
-  if (month < 9) {
-    // Before Ramadan
-    targetTitle = 'Countdown to Ramadan';
-    targetHijriLabel = '1 Ramadan';
-    targetMonth = 9;
-    targetDay = 1;
-    iconName = 'moon';
-  } else if (month === 9) {
-    // During Ramadan -> Count down to Eid al-Fitr (1 Shawwal)
-    greeting = 'Ramadan Mubarak! 🌙';
-    targetTitle = 'Countdown to Eid al-Fitr';
-    targetHijriLabel = '1 Shawwal';
-    targetMonth = 10;
-    targetDay = 1;
-    iconName = 'sparkles';
-  } else if (month === 10 && day <= 3) {
-    // During Eid al-Fitr days -> Count down to Eid al-Adha (10 Dhu al-Hijjah)
-    greeting = 'Eid Mubarak! 🎉';
-    targetTitle = 'Countdown to Eid al-Adha';
-    targetHijriLabel = '10 Dhu al-Hijjah';
-    targetMonth = 12;
-    targetDay = 10;
-    iconName = 'gift';
-  } else if (month < 12 || (month === 12 && day < 10)) {
-    // Between Eid al-Fitr and Eid al-Adha
-    targetTitle = 'Countdown to Eid al-Adha';
-    targetHijriLabel = '10 Dhu al-Hijjah';
-    targetMonth = 12;
-    targetDay = 10;
-    iconName = 'star';
-  } else if (month === 12 && day >= 10 && day <= 13) {
-    // During Eid al-Adha days -> Count down to next Ramadan
-    greeting = 'Eid al-Adha Mubarak! 🐑';
-    targetTitle = 'Countdown to Ramadan';
-    targetHijriLabel = '1 Ramadan';
-    targetMonth = 9;
-    targetDay = 1;
-    iconName = 'moon';
-  } else {
-    // After Eid al-Adha through end of Hijri year -> Next Ramadan
-    targetTitle = 'Countdown to Ramadan';
-    targetHijriLabel = '1 Ramadan';
-    targetMonth = 9;
-    targetDay = 1;
-    iconName = 'moon';
-  }
-
-  // Scan forward up to 400 days to find exact target Gregorian date
-  const startDay = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  let targetDate = new Date(startDay.getTime() + 86400000 * 30);
-  for (let i = 1; i <= 400; i++) {
-    const candidate = new Date(startDay.getTime() + i * 86400000);
-    const h = getHijriDate(candidate);
-    if (h.month === targetMonth && h.day === targetDay) {
-      targetDate = candidate;
-      break;
-    }
-  }
-
-  const diffMs = Math.max(0, targetDate.getTime() - now.getTime());
-  const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diffMs % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-  const minutes = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-
-  const targetDateFormatted = targetDate.toLocaleDateString('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-  });
-
-  // Anticipating Ramadan calculations
-  const isAnticipatingRamadan = month < 9;
-  let daysUntilShaban = 0;
-  if (isAnticipatingRamadan) {
-    if (month < 8) {
-      // Find 1 Sha'ban
-      for (let i = 1; i <= 300; i++) {
-        const candidate = new Date(startDay.getTime() + i * 86400000);
-        const h = getHijriDate(candidate);
-        if (h.month === 8 && h.day === 1) {
-          daysUntilShaban = Math.max(
-            0,
-            Math.floor((candidate.getTime() - now.getTime()) / 86400000)
-          );
-          break;
-        }
-      }
-    } else {
-      daysUntilShaban = 0;
-    }
-  }
-
-  // Progress percentage toward Ramadan based on Hijri year progress (Month 1-8 towards Month 9)
-  const totalDaysIntoYear = (month - 1) * 30 + day;
-  const targetDaysIntoYear = 8 * 30;
-  const preparationProgressPercent = Math.min(
-    100,
-    Math.max(8, Math.round((totalDaysIntoYear / targetDaysIntoYear) * 100))
-  );
-
-  return {
-    targetTitle,
-    targetHijriLabel,
-    greeting,
-    targetDate,
-    targetDateFormatted,
-    days,
-    hours,
-    minutes,
-    iconName,
-    isAnticipatingRamadan,
-    daysUntilShaban,
-    preparationProgressPercent,
-    duaArabic: 'اللَّهُمَّ بَلِّغْنَا رَمَضَان',
-    duaTranslation: 'O Allah, allow us to reach Ramadan.',
-  };
-}
-
 function formatAudioDuration(seconds: number): string {
   const mins = Math.floor(seconds / 60);
   const secs = Math.floor(seconds % 60);
@@ -445,168 +137,100 @@ export default function HomeScreen() {
   const fajrStatus = useAudioPlayerStatus(fajrPlayer);
 
   // Track currently playing prayer name
-  const [currentlyPlayingPrayer, setCurrentlyPlayingPrayer] = useState<PrayerName | null>(null);
+  const [localPlayingPrayer, setLocalPlayingPrayer] = useState<PrayerName | null>(null);
   const currentAppVersion = getCurrentAppVersion();
   const [isUpdateModalVisible, setIsUpdateModalVisible] = useState<boolean>(false);
   const [updateCheckResult, setUpdateCheckResult] = useState<UpdateCheckResult | null>(null);
   const [isUpdateBannerVisible, setIsUpdateBannerVisible] = useState<boolean>(false);
 
-  // Background Adhan Native Service sync & Android Reliability state
-  const [isNativeAdhanPlaying, setIsNativeAdhanPlaying] = useState<boolean>(false);
+  // Alert Coordinator & Android Reliability state (React 19 external store)
+  const coordinator = useMemo(() => getSharedPrayerAlertCoordinator(), []);
+  const alertSnapshot = useSyncExternalStore(
+    coordinator.subscribe,
+    coordinator.getSnapshot,
+    coordinator.getSnapshot
+  );
+
+  const currentlyPlayingPrayer: PrayerName | null = alertSnapshot.nativePlayback.isPlaying
+    ? alertSnapshot.nativePlayback.prayerName
+    : localPlayingPrayer;
+
   const [isLocationResolved, setIsLocationResolved] = useState<boolean>(false);
-  const hasPromptedNotificationPermissionRef = useRef<boolean>(false);
-  const [reliabilityStatus, setReliabilityStatus] = useState<AndroidReliabilityStatus>({
-    notificationsEnabled: true,
-    canScheduleExactAlarms: true,
-    canUseFullScreenIntent: true,
-    isBatteryOptimizationIgnored: true,
-    oemInfo: {
-      manufacturer: '',
-      brand: '',
-      sdkInt: 0,
-      oemCategory: 'standard',
-      hasOemRestrictions: false,
-    },
-  });
-  const [isBatteryBannerDismissed, setIsBatteryBannerDismissed] = useState<boolean>(false);
   const [isReliabilityExpanded, setIsReliabilityExpanded] = useState<boolean>(false);
-  const [isTestAlarmPending, setIsTestAlarmPending] = useState<boolean>(false);
-  const [testAlarmMessage, setTestAlarmMessage] = useState<string | null>(null);
 
-  const refreshReliabilityStatus = useCallback(async () => {
-    try {
-      const merged = await loadMergedReliabilityStatus();
-      setReliabilityStatus(merged);
-    } catch {}
-  }, []);
+  const reliabilityStatus = alertSnapshot.readiness;
+  const isBatteryBannerDismissed = alertSnapshot.bannerDismissed;
+  const isNativeAdhanPlaying = alertSnapshot.nativePlayback.isPlaying;
+  const isTestAlarmPending = alertSnapshot.testAlarm.pending;
+  const testAlarmMessage = alertSnapshot.testAlarm.message;
 
-  // Synchronize native background Adhan service & Android permission states with in-app UI
+  // Connect coordinator for native playback, foreground transitions, and notification taps
   useEffect(() => {
-    let isMounted = true;
-    const syncStatus = async () => {
-      try {
-        const [status, mergedReliability] = await Promise.all([
-          getAdhanPlaybackStatus(),
-          loadMergedReliabilityStatus(),
-        ]);
-        if (isMounted) {
-          setIsNativeAdhanPlaying(status.isPlaying);
-          if (status.isPlaying && status.prayerName) {
-            setCurrentlyPlayingPrayer(status.prayerName as PrayerName);
+    const disconnect = coordinator.connect();
+    const unsubscribeTap = coordinator.onNotificationTap((tap) => {
+      if (tap.type === 'post_salah_dua') {
+        setIsDuaModalVisible(true);
+      } else if (tap.type === 'adhan_prayer') {
+        setLocalPlayingPrayer(tap.prayerName);
+        try {
+          if (tap.prayerName === 'Fajr') {
+            standardPlayer.pause();
+            standardPlayer.seekTo(0);
+            fajrPlayer.seekTo(0);
+            fajrPlayer.play();
+          } else {
+            fajrPlayer.pause();
+            fajrPlayer.seekTo(0);
+            standardPlayer.seekTo(0);
+            standardPlayer.play();
           }
-          setReliabilityStatus(mergedReliability);
+        } catch (err) {
+          console.warn('[Notifications] Failed to start Adhan playback on notification response:', err);
         }
-      } catch {}
-    };
-
-    void syncStatus();
-
-    const appStateSub = AppState.addEventListener('change', (nextState) => {
-      if (nextState === 'active') {
-        void syncStatus();
       }
     });
 
-    const unsubscribeNativeEvents = addAdhanPlaybackListener({
-      onStarted: (prayer) => {
-        if (isMounted) {
-          setIsNativeAdhanPlaying(true);
-          setCurrentlyPlayingPrayer(prayer as PrayerName);
-        }
-      },
-      onStopped: () => {
-        if (isMounted) {
-          setIsNativeAdhanPlaying(false);
-          setCurrentlyPlayingPrayer(null);
-        }
-      },
-    });
-
     return () => {
-      isMounted = false;
-      appStateSub.remove();
-      unsubscribeNativeEvents();
+      unsubscribeTap();
+      disconnect();
     };
-  }, []);
+  }, [coordinator, standardPlayer, fajrPlayer]);
 
-  // Load Android banner collapse/dismiss preference on mount
-  useEffect(() => {
-    let isMounted = true;
-    void (async () => {
-      try {
-        const dismissed = await AsyncStorage.getItem('@sambayang_battery_banner_dismissed');
-        if (isMounted && dismissed === 'true') {
-          setIsBatteryBannerDismissed(true);
-        }
-      } catch {}
-    })();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  const allReliabilityChecksPassed =
-    reliabilityStatus.notificationsEnabled &&
-    reliabilityStatus.canScheduleExactAlarms &&
-    reliabilityStatus.canUseFullScreenIntent &&
-    reliabilityStatus.isBatteryOptimizationIgnored;
+  const allReliabilityChecksPassed = reliabilityStatus.allPassed;
 
   const handleFixNotifications = async () => {
-    const granted = await requestNotificationPermissions();
-    if (!granted) {
-      await openNotificationSettings();
-    }
-    await refreshReliabilityStatus();
+    await coordinator.remediate('notifications');
   };
 
   const handleFixExactAlarms = async () => {
-    await requestScheduleExactAlarmPermission();
-    await refreshReliabilityStatus();
+    await coordinator.remediate('exact_alarm');
   };
 
   const handleFixFullScreenIntent = async () => {
-    await requestFullScreenIntentPermission();
-    await refreshReliabilityStatus();
+    await coordinator.remediate('full_screen_intent');
   };
 
   const handleRequestBatteryOptimization = async () => {
-    await requestIgnoreBatteryOptimizations();
-    await refreshReliabilityStatus();
+    await coordinator.remediate('battery_optimization');
   };
 
   const handleOpenOemBackgroundSettings = async () => {
-    await openOemBackgroundSettings();
+    await coordinator.remediate('oem_background');
   };
 
   const handleDismissBatteryBanner = async () => {
-    setIsBatteryBannerDismissed(true);
+    await coordinator.dismissReadinessBanner();
     setIsReliabilityExpanded(false);
-    await AsyncStorage.setItem('@sambayang_battery_banner_dismissed', 'true');
   };
 
   const handleTestNativeAlarm = async () => {
-    if (isTestAlarmPending) return;
-    if (!isNativeAlarmAvailable()) {
+    const outcome = await coordinator.triggerTestAlarm();
+    if (!outcome.scheduled && outcome.reason === 'native_unavailable') {
       Alert.alert(
         'Native Alarm Requires Android APK Build',
         'Install the compiled Android APK (not Expo Go) to test native AlarmManager & lockscreen Adhan delivery.'
       );
-      return;
     }
-
-    setIsTestAlarmPending(true);
-    setTestAlarmMessage('Test alarm armed! Lock your screen — triggers in 5 seconds...');
-    const scheduledAt = await scheduleTestAlarm(5, false);
-    if (!scheduledAt) {
-      setIsTestAlarmPending(false);
-      setTestAlarmMessage('Unable to schedule test alarm. Check Exact Alarm & Notification settings above.');
-      return;
-    }
-
-    setTimeout(() => {
-      setIsTestAlarmPending(false);
-      setTestAlarmMessage(null);
-    }, 7000);
   };
 
   // Check for updates in the background on startup
@@ -671,11 +295,7 @@ export default function HomeScreen() {
     })();
   }, []);
 
-  // Configure notifications on mount
-  useEffect(() => {
-    initNotificationHandler();
-    void setupNotificationChannel();
-  }, []);
+
 
   // Keep current time updated every second for live countdown
   useEffect(() => {
@@ -685,38 +305,7 @@ export default function HomeScreen() {
     return () => clearInterval(timer);
   }, []);
 
-  // Listen for notification taps to open Post-Salah Dua modal or play interactive Adhan
-  useEffect(() => {
-    const sub = addNotificationResponseListener((response) => {
-      const data = response?.notification?.request?.content?.data;
-      if (data?.type === 'post_salah_dua') {
-        setIsDuaModalVisible(true);
-      } else if (data?.type === 'adhan_prayer') {
-        const prayerName = data?.prayerName as PrayerName | undefined;
-        if (prayerName) {
-          setCurrentlyPlayingPrayer(prayerName);
-          try {
-            if (prayerName === 'Fajr') {
-              standardPlayer.pause();
-              standardPlayer.seekTo(0);
-              fajrPlayer.seekTo(0);
-              fajrPlayer.play();
-            } else {
-              fajrPlayer.pause();
-              fajrPlayer.seekTo(0);
-              standardPlayer.seekTo(0);
-              standardPlayer.play();
-            }
-          } catch (err) {
-            console.warn('[Notifications] Failed to start Adhan playback on notification response:', err);
-          }
-        }
-      }
-    });
-    return () => {
-      sub.remove();
-    };
-  }, [standardPlayer, fajrPlayer]);
+
 
   // Fetch location & reverse geocode
   const fetchLocationAndWeather = useCallback(async () => {
@@ -814,74 +403,34 @@ export default function HomeScreen() {
   const calendarDateKey = `${currentTime.getFullYear()}-${String(currentTime.getMonth() + 1).padStart(2, '0')}-${String(currentTime.getDate()).padStart(2, '0')}`;
 
   // 1. Daily Prayer Times (Today & Tomorrow)
-  // Computed using Muslim World League + Shafi madhab.
+  // Computed using Muslim World League + Shafi madhab via pure prayer-calendar domain.
   // Memoized strictly on coordinates and calendar date key (changes at midnight), NOT on 1-second clock!
   const dailyPrayers = useMemo(() => {
-    const coordinates = new Coordinates(coords.latitude, coords.longitude);
-    const params = createPrayerCalculationParams();
+    const window = computeDailyPrayerWindow(coords, calendarDateKey);
 
-    // Use calendar date key at noon to guarantee stable daily calculations across DST/time boundaries
-    const [year, month, day] = calendarDateKey.split('-').map(Number);
-    const today = new Date(year, month - 1, day, 12, 0, 0);
-    const todayPrayers = new PrayerTimes(coordinates, today, params);
-
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const tomorrowPrayers = new PrayerTimes(coordinates, tomorrow, params);
-
-    const prayersList: PrayerItem[] = [
-      {
-        id: 'Fajr',
-        name: 'Fajr',
-        time: todayPrayers.fajr,
-        formattedTime: formatPrayerTime(todayPrayers.fajr),
-        iconName: 'sunny-outline',
-      },
-      {
-        id: 'Dhuhr',
-        name: 'Dhuhr',
-        time: todayPrayers.dhuhr,
-        formattedTime: formatPrayerTime(todayPrayers.dhuhr),
-        iconName: 'sunny',
-      },
-      {
-        id: 'Asr',
-        name: 'Asr',
-        time: todayPrayers.asr,
-        formattedTime: formatPrayerTime(todayPrayers.asr),
-        iconName: 'partly-sunny-outline',
-      },
-      {
-        id: 'Maghrib',
-        name: 'Maghrib',
-        time: todayPrayers.maghrib,
-        formattedTime: formatPrayerTime(todayPrayers.maghrib),
-        iconName: 'cloudy-night-outline',
-      },
-      {
-        id: 'Isha',
-        name: 'Isha',
-        time: todayPrayers.isha,
-        formattedTime: formatPrayerTime(todayPrayers.isha),
-        iconName: 'moon-outline',
-      },
-    ];
-
-    const tomorrowPrayerMap: Record<PrayerName, Date> = {
-      Fajr: tomorrowPrayers.fajr,
-      Dhuhr: tomorrowPrayers.dhuhr,
-      Asr: tomorrowPrayers.asr,
-      Maghrib: tomorrowPrayers.maghrib,
-      Isha: tomorrowPrayers.isha,
+    const prayerIconMap: Record<PrayerName, keyof typeof Ionicons.glyphMap> = {
+      Fajr: 'sunny-outline',
+      Dhuhr: 'sunny',
+      Asr: 'partly-sunny-outline',
+      Maghrib: 'cloudy-night-outline',
+      Isha: 'moon-outline',
     };
+
+    const prayersList: PrayerItem[] = window.prayersList.map((p) => ({
+      id: p.name,
+      name: p.name,
+      time: p.time,
+      formattedTime: p.formattedTime,
+      iconName: prayerIconMap[p.name],
+    }));
 
     return {
-      todayPrayers,
-      tomorrowPrayers,
+      window,
       prayersList,
-      tomorrowPrayerMap,
+      tomorrowPrayerMap: window.tomorrowPrayerMap,
+      tomorrowPrayers: window.tomorrowPrayerMap,
     };
-  }, [coords.latitude, coords.longitude, calendarDateKey]);
+  }, [coords, calendarDateKey]);
 
   // 2. Dynamic live countdown & upcoming prayer cycle (updated per second with currentTime)
   const prayerData = useMemo(() => {
@@ -898,7 +447,7 @@ export default function HomeScreen() {
     }
 
     // If after Isha, next prayer is Fajr tomorrow
-    const targetTime = nextPrayerItem ? nextPrayerItem.time : tomorrowPrayers.fajr;
+    const targetTime = nextPrayerItem ? nextPrayerItem.time : tomorrowPrayers.Fajr;
     const upcomingName: PrayerName = nextPrayerItem ? nextPrayerItem.id : 'Fajr';
 
     // Countdown calculation
@@ -965,136 +514,72 @@ export default function HomeScreen() {
   // Islamic Event Countdown data (Ramadan -> Eid al-Fitr -> Eid al-Adha)
   const todayDateString = currentTime.toDateString();
   const islamicEventData = useMemo(() => {
-    return getIslamicEventInfo(new Date(todayDateString));
+    const raw = getIslamicEventInfo(new Date(todayDateString));
+    const iconMap: Record<string, keyof typeof Ionicons.glyphMap> = {
+      ramadan_countdown: 'moon',
+      eid_fitr_countdown: 'sparkles',
+      eid_fitr_celebration: 'gift',
+      eid_adha_countdown: 'star',
+    };
+    return {
+      ...raw,
+      iconName: iconMap[raw.eventToken] || 'moon',
+    };
   }, [todayDateString]);
 
-  // Schedule single authoritative native multi-day alarm queue + post-Salah Du'a reminders
+  // Synchronize single authoritative alarm queue + post-Salah Du'a reminders via coordinator
   useEffect(() => {
-    if (!isLocationResolved) {
-      return;
-    }
-
-    let isCancelled = false;
-
-    const rescheduleAll = async () => {
-      try {
-        // Cancel previous to prevent duplicate schedules
-        await cancelAllPrayerNotifications();
-        await cancelAllPrayerAlarms();
-
-        if (!isNotificationsEnabled || isCancelled) {
-          return;
-        }
-
-        // Request POST_NOTIFICATIONS sequentially ONLY after Location prompt has resolved
-        let granted = await getNotificationPermissionGranted();
-        if (!granted && !hasPromptedNotificationPermissionRef.current && !isCancelled) {
-          hasPromptedNotificationPermissionRef.current = true;
-          granted = await requestNotificationPermissions();
-        }
-        if (!isCancelled) {
-          void refreshReliabilityStatus();
-        }
-        if (isCancelled) {
-          return;
-        }
-
-        const now = new Date();
-        const { prayersList, tomorrowPrayerMap } = dailyPrayers;
-        const nativeAvailable = isNativeAlarmAvailable();
-
-        if (nativeAvailable) {
-          const rollingAlarms = buildRollingPrayerAlarms(coords, calendarDateKey, 7);
-          await schedulePrayerAlarmsBatch(rollingAlarms);
-        }
-
-        for (const prayer of prayersList) {
-          if (isCancelled) break;
-
-          const isFajr = prayer.id === 'Fajr';
-          // Next-occurrence: if today's prayer time has passed, schedule tomorrow's occurrence
-          const scheduledTime = prayer.time.getTime() > now.getTime()
-            ? prayer.time
-            : tomorrowPrayerMap[prayer.id];
-
-          if (scheduledTime.getTime() > now.getTime()) {
-            if (!nativeAvailable) {
-              if (granted) {
-                await schedulePrayerNotification(prayer.name, scheduledTime, locationName);
-              }
-              await schedulePrayerAlarm(prayer.name, scheduledTime, isFajr);
-            }
-            if (granted) {
-              await schedulePostPrayerDuaNotification(prayer.name, scheduledTime, locationName);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('Error rescheduling prayer notifications:', err);
-      }
-    };
-
-    void rescheduleAll();
-
-    return () => {
-      isCancelled = true;
-    };
+    void coordinator.syncSchedule({
+      enabled: isNotificationsEnabled,
+      locationResolved: isLocationResolved,
+      coords,
+      locationName,
+      calendarDateKey,
+    });
   }, [
+    coordinator,
+    isNotificationsEnabled,
     isLocationResolved,
     coords,
     locationName,
-    isNotificationsEnabled,
-    dailyPrayers,
     calendarDateKey,
-    refreshReliabilityStatus,
   ]);
 
   // Trigger Adhan auto-play when a Fard prayer time arrives (robust 2-minute arrival window)
   useEffect(() => {
     if (!isNotificationsEnabled) return;
 
-    const now = currentTime.getTime();
-    const dateKey = `${currentTime.getFullYear()}-${currentTime.getMonth() + 1}-${currentTime.getDate()}`;
+    const arrival = evaluatePrayerArrival(
+      dailyPrayers.window,
+      currentTime.getTime(),
+      lastAutoPlayedKey.current
+    );
+    lastAutoPlayedKey.current = arrival.nextPlayedKey;
 
-    for (const prayer of dailyPrayers.prayersList) {
-      const prayerTime = prayer.time.getTime();
-      const elapsedSeconds = (now - prayerTime) / 1000;
-      const prayerKey = `${dateKey}-${prayer.id}`;
+    if (arrival.arrivedPrayer) {
+      const arrivedName = arrival.arrivedPrayer;
+      setLocalPlayingPrayer(arrivedName);
 
-      // Reset played key if time was wound back before the prayer (helps when testing with clock changes)
-      if (elapsedSeconds < -10 && lastAutoPlayedKey.current === prayerKey) {
-        lastAutoPlayedKey.current = null;
-      }
-
-      // Check arrival window: within [0s, 120s] (arrived in the last 2 minutes)
-      if (elapsedSeconds >= 0 && elapsedSeconds <= 120) {
-        if (lastAutoPlayedKey.current !== prayerKey) {
-          lastAutoPlayedKey.current = prayerKey;
-          setCurrentlyPlayingPrayer(prayer.id);
-
-          try {
-            if (prayer.id === 'Fajr') {
-              standardPlayer.pause();
-              void standardPlayer.seekTo(0);
-              void fajrPlayer.seekTo(0);
-              fajrPlayer.play();
-            } else {
-              fajrPlayer.pause();
-              void fajrPlayer.seekTo(0);
-              void standardPlayer.seekTo(0);
-              standardPlayer.play();
-            }
-          } catch (err) {
-            console.warn(`[Adhan Auto-Play] Failed to start Adhan for ${prayer.name}:`, err);
-          }
-          break;
+      try {
+        if (arrivedName === 'Fajr') {
+          standardPlayer.pause();
+          void standardPlayer.seekTo(0);
+          void fajrPlayer.seekTo(0);
+          fajrPlayer.play();
+        } else {
+          fajrPlayer.pause();
+          void fajrPlayer.seekTo(0);
+          void standardPlayer.seekTo(0);
+          standardPlayer.play();
         }
+      } catch (err) {
+        console.warn(`[Adhan Auto-Play] Failed to start Adhan for ${arrivedName}:`, err);
       }
     }
   }, [
     currentTime,
     isNotificationsEnabled,
-    dailyPrayers.prayersList,
+    dailyPrayers.window,
     standardPlayer,
     fajrPlayer,
   ]);
@@ -1122,7 +607,7 @@ export default function HomeScreen() {
     setIsNotificationsEnabled(newState);
 
     if (newState) {
-      const granted = await requestNotificationPermissions();
+      const granted = await coordinator.requestNotificationPermission();
       if (!granted) {
         Alert.alert(
           'Permission Required',
@@ -1130,9 +615,6 @@ export default function HomeScreen() {
         );
         return;
       }
-    } else {
-      await cancelAllPrayerNotifications();
-      await cancelAllPrayerAlarms();
     }
 
     Alert.alert(
@@ -1158,13 +640,12 @@ export default function HomeScreen() {
 
   const handleStopAdhan = async () => {
     try {
-      await stopCurrentAdhan();
-      setIsNativeAdhanPlaying(false);
+      await coordinator.stopNativePlayback();
       fajrPlayer.pause();
       void fajrPlayer.seekTo(0);
       standardPlayer.pause();
       void standardPlayer.seekTo(0);
-      setCurrentlyPlayingPrayer(null);
+      setLocalPlayingPrayer(null);
     } catch {
       // Audio fallback
     }
@@ -1177,9 +658,8 @@ export default function HomeScreen() {
         return;
       }
 
-      await stopCurrentAdhan();
-      setIsNativeAdhanPlaying(false);
-      setCurrentlyPlayingPrayer(prayerId);
+      await coordinator.stopNativePlayback();
+      setLocalPlayingPrayer(prayerId);
 
       if (prayerId === 'Fajr') {
         standardPlayer.pause();
